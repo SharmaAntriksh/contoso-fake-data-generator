@@ -45,7 +45,7 @@ Modify **config.json** to create customized dataset variants.
 Creates a final folder such as:
 
 ```
-Customer 82K | Sales 600K | 2025-11-26_14-32-10/
+Customer82K Sales600K 2025-11-26_14-32-10/
 ```
 
 And copies all generated parquet files inside it.
