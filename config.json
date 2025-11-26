@@ -42,12 +42,15 @@
     "chunk_size": 100000,
     "start_date": "2021-01-01",
     "end_date": "2025-12-31",
-    "file_format": "parquet",
+
+    "file_format": "csv",
+
     "merge_parquet": true,
     "merged_file": "sales.parquet",
     "delete_chunks": true,
     "row_group_size": 2000000,
     "compression": "snappy",
+
     "heavy_pct": 5,
     "heavy_mult": 5,
     "seed": 42

@@ -1,119 +1,158 @@
-import os
+from pathlib import Path
 import shutil
 import pandas as pd
 from datetime import datetime
 import csv
 
-def clear_folder(path):
+
+# ============================================================
+# Folder Helpers
+# ============================================================
+
+def clear_folder(path: str | Path) -> None:
     """
     Ensure `path` exists and is empty.
-    - If missing: creates it.
-    - If present: deletes all files and subfolders inside it.
+    Deletes all files/subfolders inside it.
     """
-    if not os.path.exists(path):
-        os.makedirs(path, exist_ok=True)
-        return
+    p = Path(path)
+    p.mkdir(parents=True, exist_ok=True)
 
-    for name in os.listdir(path):
-        fp = os.path.join(path, name)
+    for child in p.iterdir():
         try:
-            if os.path.islink(fp) or os.path.isfile(fp):
-                os.remove(fp)
-            elif os.path.isdir(fp):
-                shutil.rmtree(fp)
+            if child.is_file() or child.is_symlink():
+                child.unlink()
+            elif child.is_dir():
+                shutil.rmtree(child)
         except Exception as e:
-            print(f"Warning: failed to remove {fp}: {e}")
+            print(f"Warning: failed to remove {child}: {e}")
 
 
-def format_number_short(n):
+# ============================================================
+# Formatting Helpers
+# ============================================================
+
+def format_number_short(n: int) -> str:
     if n >= 1_000_000_000:
-        return f"{round(n/1_000_000_000)}B"
+        return f"{n // 1_000_000_000}B"
     if n >= 1_000_000:
-        return f"{round(n/1_000_000)}M"
+        return f"{n // 1_000_000}M"
     if n >= 1_000:
-        return f"{round(n/1_000)}K"
+        return f"{n // 1_000}K"
     return str(n)
 
 
-def convert_parquet_dims_to_csv(parquet_dims_folder, output_dims_folder):
-    """Convert all parquet dimension files into CSV format."""
-    os.makedirs(output_dims_folder, exist_ok=True)
+# ============================================================
+# Dimension Conversion
+# ============================================================
 
-    for f in os.listdir(parquet_dims_folder):
-        if f.endswith(".parquet"):
-            src = os.path.join(parquet_dims_folder, f)
-            df = pd.read_parquet(src)
-            out_name = f.replace(".parquet", ".csv")
-            dst = os.path.join(output_dims_folder, out_name)
-            df.to_csv(dst, index=False, encoding="utf-8", quoting=csv.QUOTE_ALL)
-
-
-def create_final_output_folder(parquet_dims, fact_folder, file_format):
+def convert_parquet_dims_to_csv(parquet_dims_folder: str | Path,
+                                output_dims_folder: str | Path) -> None:
     """
-    Create the final packaged dataset folder inside ./generated_datasets/
-    Includes:
+    Convert all .parquet dimension files into CSV format.
+    """
+    src = Path(parquet_dims_folder)
+    dst = Path(output_dims_folder)
+    dst.mkdir(parents=True, exist_ok=True)
+
+    for f in src.glob("*.parquet"):
+        df = pd.read_parquet(f)
+        out = dst / (f.stem + ".csv")
+        df.to_csv(out, index=False, encoding="utf-8", quoting=csv.QUOTE_ALL)
+
+
+# ============================================================
+# Counting Helpers
+# ============================================================
+
+def count_rows_csv(path: Path) -> int:
+    """
+    Efficient CSV row counter ignoring header.
+    """
+    count = 0
+    with path.open("r", encoding="utf-8", newline="") as f:
+        next(f, None)
+        for _ in f:
+            count += 1
+    return count
+
+
+def count_rows_parquet(path: Path) -> int:
+    """
+    Simply loads the parquet and counts rows.
+    """
+    return len(pd.read_parquet(path))
+
+
+# ============================================================
+# Main: Final Output Folder Creation
+# ============================================================
+
+def create_final_output_folder(parquet_dims: str | Path,
+                               fact_folder: str | Path,
+                               file_format: str) -> Path:
+    """
+    Create final packaged dataset folder under ./generated_datasets/
+    Structure:
         dims/  (csv or parquet)
         facts/ (csv or parquet)
-    Returns:
-        final folder path
     """
+    parquet_dims = Path(parquet_dims)
+    fact_folder = Path(fact_folder)
 
-    # ------------------------------
-    # Count customer rows
-    # ------------------------------
-    cust_path = os.path.join(parquet_dims, "customers.parquet")
-    customers_df = pd.read_parquet(cust_path, columns=["CustomerKey"])
-    customer_rows = len(customers_df)
+    # --------------------------------------------------------
+    # Count Customer Rows
+    # --------------------------------------------------------
+    cust_path = parquet_dims / "customers.parquet"
+    customer_rows = count_rows_parquet(cust_path)
 
-    # ------------------------------
-    # Count sales rows
-    # ------------------------------
+    # --------------------------------------------------------
+    # Count Sales Rows
+    # --------------------------------------------------------
     sales_rows = 0
-    for f in os.listdir(fact_folder):
-        fp = os.path.join(fact_folder, f)
-        if file_format == "csv" and f.endswith(".csv"):
-            sales_rows += sum(1 for _ in open(fp, "r", encoding="utf-8")) - 1
-        elif file_format == "parquet" and f.endswith(".parquet"):
-            sales_rows += len(pd.read_parquet(fp))
+    if file_format == "csv":
+        fact_files = list(fact_folder.glob("*.csv"))
+        for f in fact_files:
+            sales_rows += count_rows_csv(f)
+    else:
+        fact_files = list(fact_folder.glob("*.parquet"))
+        for f in fact_files:
+            sales_rows += count_rows_parquet(f)
 
     cust_short = format_number_short(customer_rows)
     sales_short = format_number_short(sales_rows)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
-    # ------------------------------
-    # SAFE folder name in generated_datasets/
-    # ------------------------------
-    base_output_dir = "./generated_datasets"
-    os.makedirs(base_output_dir, exist_ok=True)
+    # --------------------------------------------------------
+    # Create final folder
+    # --------------------------------------------------------
+    base_output_dir = Path("./generated_datasets")
+    base_output_dir.mkdir(exist_ok=True)
 
-    folder_name = os.path.join(
-        base_output_dir,
-        f"Customer {cust_short} - Sales {sales_short} - {timestamp}"
-    )
-    os.makedirs(folder_name, exist_ok=True)
+    folder_name = f"Customer_{cust_short}__Sales_{sales_short}__{timestamp}"
+    final_folder = base_output_dir / folder_name
+    final_folder.mkdir(exist_ok=True)
 
-    # ------------------------------
-    # Create dims/ and facts/ subfolders
-    # ------------------------------
-    dim_out = os.path.join(folder_name, "dims")
-    fact_out_final = os.path.join(folder_name, "facts")
-    os.makedirs(dim_out, exist_ok=True)
-    os.makedirs(fact_out_final, exist_ok=True)
+    # Create dims/ and facts/
+    dims_out = final_folder / "dims"
+    dims_out.mkdir(exist_ok=True)
 
-    # ------------------------------
-    # Dimensions: convert or copy
-    # ------------------------------
+    facts_out = final_folder / "facts"
+    facts_out.mkdir(exist_ok=True)
+
+    # --------------------------------------------------------
+    # Copy / Convert Dimension Files
+    # --------------------------------------------------------
     if file_format == "csv":
-        convert_parquet_dims_to_csv(parquet_dims, dim_out)
+        convert_parquet_dims_to_csv(parquet_dims, dims_out)
     else:
-        # Copy Parquet dims
-        for f in os.listdir(parquet_dims):
-            shutil.copy2(os.path.join(parquet_dims, f), os.path.join(dim_out, f))
+        for f in parquet_dims.glob("*.parquet"):
+            shutil.copy2(f, dims_out / f.name)
 
-    # ------------------------------
-    # Facts: copy CSV or Parquet files
-    # ------------------------------
-    for f in os.listdir(fact_folder):
-        shutil.copy2(os.path.join(fact_folder, f), os.path.join(fact_out_final, f))
+    # --------------------------------------------------------
+    # Copy Fact Files
+    # --------------------------------------------------------
+    for f in fact_files:
+        shutil.copy2(f, facts_out / f.name)
 
-    return folder_name
+    return final_folder
+
