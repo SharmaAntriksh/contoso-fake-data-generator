@@ -7,6 +7,8 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 import csv
+from multiprocessing import Pool, cpu_count
+
 
 # ============================================================
 # Basic Helpers
@@ -345,6 +347,54 @@ def merge_parquet_files(out_folder, merged_file_name, delete_chunks=True):
 
     return merged_path
 
+def _worker_generate_chunk(args):
+    (
+        idx,
+        batch,
+        date_pool,
+        date_prob,
+        product_np,
+        store_keys,
+        promo_keys_all,
+        promo_pct_all,
+        promo_start_all,
+        promo_end_all,
+        customers,
+        store_to_geo,
+        geo_to_currency,
+        out_folder,
+        file_format,
+        row_group_size,
+        compression
+    ) = args
+
+    seed = np.random.randint(1, 1 << 30)
+
+    df = generate_chunk_df(
+        batch,
+        date_pool,
+        date_prob,
+        product_np,
+        store_keys,
+        promo_keys_all,
+        promo_pct_all,
+        promo_start_all,
+        promo_end_all,
+        customers,
+        seed,
+        store_to_geo,
+        geo_to_currency
+    )
+
+    if file_format == "csv":
+        out = f"{out_folder}/sales_chunk{idx:04d}.csv"
+        df.to_csv(out, index=False, quoting=csv.QUOTE_ALL)
+    else:
+        out = f"{out_folder}/sales_chunk{idx:04d}.parquet"
+        write_parquet(df, out, row_group_size=row_group_size, compression=compression)
+
+    return out
+
 
 # ============================================================
 # Main Function
@@ -439,12 +489,16 @@ def generate_sales_fact(
     idx = 0
     created = []
 
+    # === Prepare chunk tasks for workers ===
+    tasks = []
+    remaining = total_rows
+    idx = 0
+
     while remaining > 0:
         batch = min(chunk_size, remaining)
 
-        print(f"Generating chunk {idx} with {batch:,} rows...", flush=True)
-
-        df = generate_chunk_df(
+        tasks.append((
+            idx,
             batch,
             date_pool,
             date_prob,
@@ -455,34 +509,28 @@ def generate_sales_fact(
             promo_start_all,
             promo_end_all,
             customers,
-            np.random.randint(1, 1 << 30),
             store_to_geo,
-            geo_to_currency
-        )
+            geo_to_currency,
+            out_folder,
+            file_format,
+            row_group_size,
+            compression
+        ))
 
-        if file_format == "csv":
-            out = f"{out_folder}/sales_chunk{idx:04d}.csv"
-            df.to_csv(out, index=False, quoting=csv.QUOTE_ALL)
-        else:
-            out = f"{out_folder}/sales_chunk{idx:04d}.parquet"
-            write_parquet(
-                df,
-                out,
-                row_group_size=row_group_size,
-                compression=compression
-            )
-
-        print(f"✓ Finished chunk {idx} -> {out}", flush=True)
-        
-        created.append(out)
         remaining -= batch
         idx += 1
 
+    print(f"Spawning {min(len(tasks), cpu_count())} worker processes...")
+
+    created = []
+    with Pool(processes=min(len(tasks), cpu_count())) as pool:
+        for out in pool.imap_unordered(_worker_generate_chunk, tasks):
+            print(f"✓ Finished {out}", flush=True)
+            created.append(out)
+
+    print("All chunks completed.")
+
     if file_format == "parquet" and merge_parquet:
-        merge_parquet_files(
-            out_folder,
-            merged_file,
-            delete_chunks=delete_chunks
-        )
+        merge_parquet_files(out_folder, merged_file, delete_chunks=delete_chunks)
 
     return created
