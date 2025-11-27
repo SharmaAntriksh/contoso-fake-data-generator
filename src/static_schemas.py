@@ -173,3 +173,17 @@ STATIC_SCHEMAS = {
         ("ExchangeRate", "FLOAT")
     ]
 }
+
+def get_sales_schema(skip_order_cols: bool):
+    """Return the Sales schema with or without order number columns."""
+    base_schema = STATIC_SCHEMAS["Sales"]
+
+    if not skip_order_cols:
+        return base_schema
+
+    # remove order columns
+    return [
+        (col, dtype)
+        for col, dtype in base_schema
+        if col not in ("SalesOrderNumber", "SalesOrderLineNumber")
+    ]

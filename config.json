@@ -44,13 +44,13 @@
       "parquet_folder": "./data/parquet_dims",
       "out_folder": "./data/fact_out",
 
-      "total_rows": 100000000,
+      "total_rows": 100000,
       "chunk_size": 5000000,
 
       "start_date": "2021-01-01",
       "end_date": "2025-10-31",
 
-      "file_format": "parquet",             
+      "file_format": "csv",             
       "write_delta": false,                 
       "delta_output_folder": "./data/fact_out/delta",     
 

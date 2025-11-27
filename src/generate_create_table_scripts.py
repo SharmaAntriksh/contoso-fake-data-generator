@@ -1,30 +1,17 @@
 import os
-from src.static_schemas import STATIC_SCHEMAS
+from src.static_schemas import STATIC_SCHEMAS, get_sales_schema
 
 
 def create_table_from_static_schema(table_name, cols):
-    """
-    Build a CREATE TABLE SQL script from a static schema definition.
-    cols = list of (column_name, SQL_datatype)
-    """
     lines = [f"CREATE TABLE [{table_name}] ("]
     for col, dtype in cols:
         lines.append(f"    [{col}] {dtype},")
-    lines[-1] = lines[-1].rstrip(",")  # remove trailing comma
+    lines[-1] = lines[-1].rstrip(",")
     lines.append(");")
     return "\n".join(lines)
 
 
-def generate_all_create_tables(dim_folder, fact_folder, output_folder):
-    """
-    Generate CREATE TABLE scripts for:
-      - All dimension tables found in dim_folder (CSV only)
-      - The Sales fact table (always)
-
-    Outputs:
-      create_dimensions.sql
-      create_facts.sql
-    """
+def generate_all_create_tables(dim_folder, fact_folder, output_folder, skip_order_cols=False):
     os.makedirs(output_folder, exist_ok=True)
 
     dim_out_path = os.path.join(output_folder, "create_dimensions.sql")
@@ -33,33 +20,35 @@ def generate_all_create_tables(dim_folder, fact_folder, output_folder):
     dim_scripts = []
     fact_scripts = []
 
-    # ------------------------------------------------------------
-    # Dimension Tables (static schemas)
-    # ------------------------------------------------------------
-    # Dimensions are ALWAYS CSV at this stage (per main.py logic)
+    # -------------------------
+    # Dimensions
+    # -------------------------
     for fname in sorted(os.listdir(dim_folder)):
         if not fname.lower().endswith(".csv"):
-            continue  # skip parquet / other files safely
+            continue
 
-        base = os.path.splitext(fname)[0]                     # e.g. "product_category"
+        base = os.path.splitext(fname)[0]
         table_name = base.replace("_", " ").title().replace(" ", "_")
 
-        # Only generate scripts for tables present in STATIC_SCHEMAS
         if table_name in STATIC_SCHEMAS:
             dim_scripts.append(
                 create_table_from_static_schema(table_name, STATIC_SCHEMAS[table_name])
             )
 
-    # ------------------------------------------------------------
-    # Fact table (Sales) - ALWAYS ONLY ONE
-    # ------------------------------------------------------------
+    # -------------------------
+    # Sales Fact Table
+    # -------------------------
+    # main.py will pass the correct flag
+    sales_schema = get_sales_schema(skip_order_cols)
+
+
     fact_scripts.append(
-        create_table_from_static_schema("Sales", STATIC_SCHEMAS["Sales"])
+        create_table_from_static_schema("Sales", sales_schema)
     )
 
-    # ------------------------------------------------------------
-    # Write final SQL files
-    # ------------------------------------------------------------
+    # -------------------------
+    # Write outputs
+    # -------------------------
     with open(dim_out_path, "w", encoding="utf-8") as f:
         f.write("\n\n".join(dim_scripts))
 

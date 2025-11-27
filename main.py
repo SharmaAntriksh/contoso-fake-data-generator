@@ -172,6 +172,7 @@ def main():
         cfg = json.load(f)
 
     sales_cfg = normalize_sales_config(cfg["sales"])
+    skip_order_cols = sales_cfg.get("skip_order_cols", False)
 
     parquet_dims = Path(sales_cfg["parquet_folder"])
     fact_out = Path(sales_cfg["out_folder"])
@@ -277,7 +278,8 @@ def main():
             generate_all_create_tables(
                 dim_folder=dims_out,
                 fact_folder=facts_out,
-                output_folder=final_folder
+                output_folder=final_folder,
+                skip_order_cols=skip_order_cols
             )
 
 
