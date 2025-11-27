@@ -23,25 +23,32 @@ def load_list(path):
 # ============================================================
 
 def load_real_geography(config):
+    """
+    Load the final DimGeography (already built by geography_builder.py)
+    and optionally apply continent/max_geos filters defined in config.
+    """
     geo_cfg = config["customers"]["geography_source"]
 
-    path = geo_cfg["path"]
+    path = geo_cfg["path"]            # now points to FINAL geography.parquet
     continent = geo_cfg["continent"]
     max_geos = geo_cfg["max_geos"]
 
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"DimGeography not found: {path}")
+
     df_geo = pd.read_parquet(path)
 
-    # Continent filtering (supports string or list)
+    # Filtering by continent if configured
     if isinstance(continent, list):
         df_geo = df_geo[df_geo["Continent"].isin(continent)]
     elif continent != "All":
         df_geo = df_geo[df_geo["Continent"] == continent]
 
-    # Row limit
     if max_geos > 0:
         df_geo = df_geo.head(max_geos)
 
     return df_geo.reset_index(drop=True)
+
 
 
 # ============================================================
@@ -261,4 +268,4 @@ def generate_synthetic_customers(
     if save_customer_csv:
         df.to_csv(out_cust, index=False, encoding="utf-8", quoting=csv.QUOTE_ALL)
 
-    return df, df_geo
+    return df

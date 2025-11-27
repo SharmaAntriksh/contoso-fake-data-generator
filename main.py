@@ -14,6 +14,9 @@ from src.generate_create_table_scripts import generate_all_create_tables
 
 from src.currency import generate_currency_dimension
 from src.exchange_rates import generate_exchange_rate_table
+from src.geography_builder import build_dim_geography
+
+from src.versioning import should_regenerate, save_version
 
 
 # ---------------------------------------------------------
@@ -42,7 +45,7 @@ def normalize_sales_config(cfg):
 
 
 # ---------------------------------------------------------
-# Dimension Generation
+# Dimension Generation (with SMART VERSIONING)
 # ---------------------------------------------------------
 
 def generate_dimensions(cfg, parquet_dims: Path):
@@ -50,75 +53,119 @@ def generate_dimensions(cfg, parquet_dims: Path):
     promo_cfg = cfg["promotions"]
     store_cfg = cfg["stores"]
     date_cfg = cfg["dates"]
+    exch_cfg = cfg["exchange_rates"]
 
     # -----------------------------------------------------
-    # Customers + Geography
+    # Geography
     # -----------------------------------------------------
-    with stage("Generating Customers and Geography"):
-        customers, geo = generate_synthetic_customers(cfg)
-        customers.to_parquet(parquet_dims / "customers.parquet", index=False)
-        geo.to_parquet(parquet_dims / "geography.parquet", index=False)
+    geo_out = parquet_dims / "geography.parquet"
+    if should_regenerate("geography", cust_cfg["geography_source"], geo_out):
+        with stage("Generating Geography"):
+            geo_cfg = cust_cfg["geography_source"]
+            build_dim_geography(
+                source_path=geo_cfg["path"],
+                output_path=geo_out,
+                max_rows=geo_cfg["max_geos"]
+            )
+            save_version("geography", geo_cfg)
+    else:
+        print("✔ Geography up-to-date; skipping regeneration")
+
+    # -----------------------------------------------------
+    # Customers
+    # -----------------------------------------------------
+    cust_out = parquet_dims / "customers.parquet"
+    if should_regenerate("customers", cust_cfg, cust_out):
+        with stage("Generating Customers"):
+            customers = generate_synthetic_customers(cfg)
+            customers.to_parquet(cust_out, index=False)
+            save_version("customers", cust_cfg)
+    else:
+        print("✔ Customers up-to-date; skipping regeneration")
 
     # -----------------------------------------------------
     # Promotions
     # -----------------------------------------------------
-    with stage("Generating Promotions"):
-        promotions = generate_promotions_catalog(
-            years=promo_cfg["years"],   # FIXED
-            num_seasonal=promo_cfg["num_seasonal"],
-            num_clearance=promo_cfg["num_clearance"],
-            num_limited=promo_cfg["num_limited"],
-            seed=promo_cfg["seed"]
-        )
-        promotions.to_parquet(parquet_dims / "promotions.parquet", index=False)
+    promo_out = parquet_dims / "promotions.parquet"
+    if should_regenerate("promotions", promo_cfg, promo_out):
+        with stage("Generating Promotions"):
+            promotions = generate_promotions_catalog(
+                years=promo_cfg["years"],
+                num_seasonal=promo_cfg["num_seasonal"],
+                num_clearance=promo_cfg["num_clearance"],
+                num_limited=promo_cfg["num_limited"],
+                seed=promo_cfg["seed"]
+            )
+            promotions.to_parquet(promo_out, index=False)
+            save_version("promotions", promo_cfg)
+    else:
+        print("✔ Promotions up-to-date; skipping regeneration")
 
     # -----------------------------------------------------
     # Stores
     # -----------------------------------------------------
-    with stage("Generating Stores"):
-        stores = generate_store_table(
-            geography_parquet_path=store_cfg["geography_path"],
-            num_stores=store_cfg["num_stores"],
-            opening_start=store_cfg["opening_start"],
-            opening_end=store_cfg["opening_end"],
-            closing_end=store_cfg["closing_end"],
-            seed=store_cfg["seed"]
-        )
-        stores.to_parquet(parquet_dims / "stores.parquet", index=False)
+    store_out = parquet_dims / "stores.parquet"
+    if should_regenerate("stores", store_cfg, store_out):
+        with stage("Generating Stores"):
+            stores = generate_store_table(
+                geography_parquet_path=store_cfg["geography_path"],
+                num_stores=store_cfg["num_stores"],
+                opening_start=store_cfg["opening_start"],
+                opening_end=store_cfg["opening_end"],
+                closing_end=store_cfg["closing_end"],
+                seed=store_cfg["seed"]
+            )
+            stores.to_parquet(store_out, index=False)
+            save_version("stores", store_cfg)
+    else:
+        print("✔ Stores up-to-date; skipping regeneration")
 
     # -----------------------------------------------------
     # Dates
     # -----------------------------------------------------
-    with stage("Generating Dates"):
-        dates = generate_date_table(
-            date_cfg["start_date"],
-            date_cfg["end_date"],
-            date_cfg["fiscal_month_offset"]
-        )
-        dates.to_parquet(parquet_dims / "dates.parquet", index=False)
+    dates_out = parquet_dims / "dates.parquet"
+    if should_regenerate("dates", date_cfg, dates_out):
+        with stage("Generating Dates"):
+            dates = generate_date_table(
+                date_cfg["start_date"],
+                date_cfg["end_date"],
+                date_cfg["fiscal_month_offset"]
+            )
+            dates.to_parquet(dates_out, index=False)
+            save_version("dates", date_cfg)
+    else:
+        print("✔ Dates up-to-date; skipping regeneration")
 
     # -----------------------------------------------------
     # Currency Dimension
     # -----------------------------------------------------
-    with stage("Generating Currency Dimension"):
-        cur_cfg = cfg["exchange_rates"]
-        currency_df = generate_currency_dimension(cur_cfg["currencies"])
-        currency_df.to_parquet(parquet_dims / "currency.parquet", index=False)
+    curr_out = parquet_dims / "currency.parquet"
+    if should_regenerate("currency", exch_cfg, curr_out):
+        with stage("Generating Currency Dimension"):
+            currency_df = generate_currency_dimension(exch_cfg["currencies"])
+            currency_df.to_parquet(curr_out, index=False)
+            save_version("currency", exch_cfg)
+    else:
+        print("✔ Currency dimension up-to-date; skipping regeneration")
 
     # -----------------------------------------------------
     # Exchange Rates
     # -----------------------------------------------------
-    with stage("Generating Exchange Rates"):
-        exch_cfg = cfg["exchange_rates"]
-        fx_df = generate_exchange_rate_table(
-            exch_cfg["start_date"],
-            exch_cfg["end_date"],
-            exch_cfg["currencies"],
-            exch_cfg["base_currency"],
-            exch_cfg["volatility"],
-            exch_cfg["seed"]
-        )
-        fx_df.to_parquet(parquet_dims / "exchange_rates.parquet", index=False)
+    fx_out = parquet_dims / "exchange_rates.parquet"
+    if should_regenerate("exchange_rates", exch_cfg, fx_out):
+        with stage("Generating Exchange Rates"):
+            fx_df = generate_exchange_rate_table(
+                exch_cfg["start_date"],
+                exch_cfg["end_date"],
+                exch_cfg["currencies"],
+                exch_cfg["base_currency"],
+                exch_cfg["volatility"],
+                exch_cfg["seed"]
+            )
+            fx_df.to_parquet(fx_out, index=False)
+            save_version("exchange_rates", exch_cfg)
+    else:
+        print("✔ Exchange Rates up-to-date; skipping regeneration")
 
 
 
@@ -129,9 +176,6 @@ def generate_dimensions(cfg, parquet_dims: Path):
 def main():
     total_start = time.time()
 
-    # ----------------------------------
-    # Load config
-    # ----------------------------------
     with open("config.json", "r", encoding="utf-8") as f:
         cfg = json.load(f)
 
@@ -140,20 +184,15 @@ def main():
     parquet_dims = Path(sales_cfg["parquet_folder"])
     fact_out = Path(sales_cfg["out_folder"])
 
-    # Ensure output folders exist (NEW)
     parquet_dims.mkdir(parents=True, exist_ok=True)
     fact_out.mkdir(parents=True, exist_ok=True)
 
     validate_config(sales_cfg, "sales", ["total_rows", "chunk_size", "file_format"])
 
-    # ----------------------------------
-    # Dimension tables
-    # ----------------------------------
+    # Dimensions
     generate_dimensions(cfg, parquet_dims)
 
-    # ----------------------------------
     # Sales Fact
-    # ----------------------------------
     with stage("Generating Sales"):
         clear_folder(fact_out)
 
@@ -178,9 +217,7 @@ def main():
             )}
         )
 
-    # ----------------------------------
-    # Final Output Packaging
-    # ----------------------------------
+    # Final output
     with stage("Creating Final Output Folder"):
         final_folder = create_final_output_folder(
             parquet_dims=parquet_dims,
@@ -188,9 +225,7 @@ def main():
             file_format=sales_cfg["file_format"]
         )
 
-    # ----------------------------------
     # SQL Scripts (CSV only)
-    # ----------------------------------
     if sales_cfg.get("file_format") == "csv":
         with stage("Generating BULK INSERT Scripts"):
             dims_folder = final_folder / "dims"
@@ -215,9 +250,6 @@ def main():
                 output_folder=final_folder
             )
 
-    # ----------------------------------
-    # Summary
-    # ----------------------------------
     print("\n✔ All tables generated and packaged successfully!\n")
     print(f"📂 Output Folder: {final_folder}")
     print(f"\n=== ALL STEPS COMPLETED IN {time.time() - total_start:.2f} SECONDS ===\n")

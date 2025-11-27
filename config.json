@@ -10,10 +10,11 @@
     "names_folder": "./data/customer_names",
 
     "geography_source": {
-      "path": "./data/parquet_dims/geography.parquet",
-      "continent": "All",
-      "max_geos": 200
+        "path": "./data/parquet_dims/geography_source.parquet",
+        "continent": "All",
+        "max_geos": 1000
     }
+
   },
 
   "promotions": {
@@ -49,7 +50,7 @@
     "start_date": "2021-01-01",
     "end_date": "2025-12-31",
 
-    "file_format": "parquet",
+    "file_format": "csv",
 
     "merge_parquet": true,
     "merged_file": "sales.parquet",
@@ -64,11 +65,12 @@
   },
 
   "exchange_rates": {
-    "currencies": ["USD", "EUR", "INR", "GBP"],
+    "currencies": ["USD", "EUR", "INR", "GBP", "AUD", "CAD"],
     "base_currency": "USD",
     "start_date": "2021-01-01",
     "end_date": "2025-12-31",
     "volatility": 0.02,
     "seed": 42
   }
+
 }

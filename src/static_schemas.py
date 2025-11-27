@@ -94,16 +94,29 @@ STATIC_SCHEMAS = {
         ("IsOrderDelayed",       "INT")
     ],
 
-    "Product_category": [
+    "Product_Category": [
         ("CategoryKey",    "INT"),
         ("Category",       "VARCHAR(10)"),
         ("Category Label", "VARCHAR(10)")
     ],
 
-    "Product_subcategory": [
+    "Product_Subcategory": [
         ("ProductSubcategoryKey", "INT"),
         ("Subcategory Label",     "VARCHAR(10)"),
         ("Subcategory",           "VARCHAR(50)"),
         ("CategoryKey",           "INT")
-    ]
+    ],
+    "Currency": [
+        ("CurrencyKey", "INT"),
+        ("ISOCode", "NVARCHAR(10)"),
+        ("CurrencyName", "NVARCHAR(50)")
+    ],
+
+    "Exchange_Rates": [
+        ("Date", "DATE"),
+        ("FromCurrency", "NVARCHAR(10)"),
+        ("ToCurrency", "NVARCHAR(10)"),
+        ("ExchangeRate", "FLOAT")
+    ],
+
 }

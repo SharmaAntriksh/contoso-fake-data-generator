@@ -414,32 +414,30 @@ def generate_sales_fact(
     # ================================
     geo_df = load_parquet_df(
         f"{parquet_folder}/geography.parquet",
-        ["GeographyKey", "Country"]
+        ["GeographyKey", "Country", "ISOCode"]
     )
+    
+    print("DEBUG - geography loaded columns:", geo_df.columns)
+    print("DEBUG - sample ISO codes:", geo_df["ISOCode"].unique())
 
-    currency_df = load_parquet_df(
-        f"{parquet_folder}/currency.parquet",
-        ["CurrencyKey", "ISOCode"]
-    )
+    currency_df = pd.read_parquet(f"{parquet_folder}/currency.parquet")
+    currency_df = currency_df[["CurrencyKey", "ISOCode"]]
+    print("DEBUG - currency_df loaded:", currency_df.head())
 
-    country_to_currency = {
-        "United States": "USD",
-        "USA": "USD",
-        "US": "USD",
-        "India": "INR",
-        "United Kingdom": "GBP",
-        "UK": "GBP",
-        "Germany": "EUR",
-        "France": "EUR",
-        "Spain": "EUR",
-    }
-    default_currency = "USD"
+    # Expect geography.parquet to contain ISOCode already
+    if "ISOCode" not in geo_df.columns:
+        raise ValueError("Geography table must include ISOCode column.")
 
-    geo_df["ISOCode"] = geo_df["Country"].map(
-        country_to_currency
-    ).fillna(default_currency)
-
+    # Merge geography → currency dimension
     geo_df = geo_df.merge(currency_df, on="ISOCode", how="left")
+
+    # Validate merge
+    if geo_df["CurrencyKey"].isna().any():
+        missing = geo_df[geo_df["CurrencyKey"].isna()][["GeographyKey","Country","ISOCode"]]
+        raise ValueError(f"Missing currency for some geographies:\n{missing}")
+
+# No second merge. Do NOT merge again.
+
 
     geo_to_currency = dict(
         zip(geo_df["GeographyKey"], geo_df["CurrencyKey"])
