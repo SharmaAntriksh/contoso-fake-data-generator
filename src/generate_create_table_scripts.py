@@ -41,7 +41,8 @@ def generate_all_create_tables(dim_folder, fact_folder, output_folder):
         if not fname.lower().endswith(".csv"):
             continue  # skip parquet / other files safely
 
-        table_name = os.path.splitext(fname)[0].capitalize()
+        base = os.path.splitext(fname)[0]                     # e.g. "product_category"
+        table_name = base.replace("_", " ").title().replace(" ", "_")
 
         # Only generate scripts for tables present in STATIC_SCHEMAS
         if table_name in STATIC_SCHEMAS:

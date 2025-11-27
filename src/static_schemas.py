@@ -1,10 +1,8 @@
-# static_schemas.py
-#
-# Defines column names and SQL datatypes for CREATE TABLE generation.
-# Used by: generate_create_table_scripts.py
-
 STATIC_SCHEMAS = {
 
+    # -----------------------
+    # DIMENSIONS
+    # -----------------------
     "Customers": [
         ("CustomerKey",        "INT NOT NULL"),
         ("CustomerName",       "VARCHAR(100)"),
@@ -17,63 +15,128 @@ STATIC_SCHEMAS = {
         ("Education",          "VARCHAR(20)"),
         ("Occupation",         "VARCHAR(20)"),
         ("CustomerType",       "VARCHAR(20)"),
-        ("CompanyName",        "VARCHAR(20)"),
+        ("CompanyName",        "VARCHAR(200)"),
         ("GeographyKey",       "INT")
-    ],
-
-    "Products": [
-        ("ProductKey",            "INT NOT NULL"),
-        ("ProductCode",           "VARCHAR(20)"),
-        ("ProductName",           "VARCHAR(200)"),
-        ("ProductDescription",    "VARCHAR(200)"),
-        ("ProductSubcategoryKey", "INT"),
-        ("Brand",                 "VARCHAR(20)"),
-        ("Class",                 "VARCHAR(20)"),
-        ("Color",                 "VARCHAR(20)"),
-        ("StockTypeCode",         "CHAR(1)"),
-        ("StockType",             "VARCHAR(10)"),
-        ("UnitCost",              "DECIMAL(8, 2)"),
-        ("UnitPrice",             "DECIMAL(8, 2)")
     ],
 
     "Geography": [
         ("GeographyKey", "INT NOT NULL"),
         ("GeographyType","VARCHAR(50)"),
-        ("City",         "VARCHAR(50)"),
-        ("State",        "VARCHAR(50)"),
-        ("Country",      "VARCHAR(50)"),
-        ("Continent",    "VARCHAR(50)")
+        ("City",         "VARCHAR(100)"),
+        ("State",        "VARCHAR(100)"),
+        ("Country",      "VARCHAR(100)"),
+        ("Continent",    "VARCHAR(100)"),
+        ("ISOCode",      "VARCHAR(10)")
     ],
 
-    "Stores": [
-        ("StoreKey",         "INT NOT NULL"),
-        ("StoreName",        "VARCHAR(20)"),
-        ("StoreType",        "VARCHAR(20)"),
-        ("Status",           "VARCHAR(10)"),
-        ("GeographyKey",     "INT"),
-        ("OpeningDate",      "DATETIME"),
-        ("ClosingDate",      "DATETIME"),
-        ("OpenFlag",         "BIT"),
-        ("SquareFootage",    "INT"),
-        ("EmployeeCount",    "INT"),
-        ("StoreManager",     "VARCHAR(30)"),
-        ("Phone",            "VARCHAR(20)"),
-        ("StoreDescription", "VARCHAR(200)"),
-        ("CloseReason",      "VARCHAR(20)")
+    "Products": [
+        ("ProductKey",            "INT NOT NULL"),
+        ("ProductName",           "VARCHAR(200)"),
+        ("ProductSubcategoryKey", "INT"),
+        ("UnitCost",              "DECIMAL(10,2)"),
+        ("UnitPrice",             "DECIMAL(10,2)"),
+        ("Status",                "VARCHAR(20)")
+    ],
+
+    "Product_Category": [
+        ("ProductCategoryKey", "INT"),
+        ("ProductCategoryName","VARCHAR(100)")
+    ],
+
+    "Product_Subcategory": [
+        ("ProductSubcategoryKey", "INT"),
+        ("ProductSubcategoryName","VARCHAR(100)"),
+        ("ProductCategoryKey",    "INT")
     ],
 
     "Promotions": [
         ("PromotionKey",         "INT NOT NULL"),
-        ("PromotionLabel",       "VARCHAR(10)"),
         ("PromotionName",        "VARCHAR(200)"),
-        ("PromotionDescription", "VARCHAR(200)"),
-        ("DiscountPct",          "DECIMAL(6, 2)"),
-        ("PromotionType",        "VARCHAR(30)"),
-        ("PromotionCategory",    "VARCHAR(20)"),
+        ("DiscountPct",          "DECIMAL(6,2)"),
         ("StartDate",            "DATE"),
         ("EndDate",              "DATE")
     ],
 
+    "Stores": [
+        ("StoreKey",         "INT NOT NULL"),
+        ("StoreName",        "VARCHAR(100)"),
+        ("StoreType",        "VARCHAR(20)"),
+        ("Status",           "VARCHAR(10)"),
+        ("GeographyKey",     "INT"),
+        ("OpenDate",         "DATE"),
+        ("CloseDate",        "DATE")
+    ],
+
+    "Dates": [
+        ("Date",                         "DATE NOT NULL"),
+        ("Date Key",                     "INT NOT NULL"),
+        ("Year",                         "INT"),
+        ("Is Year Start",                "INT"),
+        ("Is Year End",                  "INT"),
+        ("Year Month Number",            "INT"),
+        ("Year Quarter Number",          "INT"),
+        ("Quarter",                      "INT"),
+        ("Quarter Year",                 "VARCHAR(10)"),
+        ("Quarter Start Date",           "DATE"),
+        ("Quarter End Date",             "DATE"),
+        ("Is Quarter Start",             "INT"),
+        ("Is Quarter End",               "INT"),
+        ("Month",                        "INT"),
+        ("Month Name",                   "VARCHAR(10)"),
+        ("Month Short",                  "VARCHAR(10)"),
+        ("Month Start Date",             "DATE"),
+        ("Month End Date",               "DATE"),
+        ("Month Year",                   "VARCHAR(20)"),
+        ("Month Year Number",            "INT"),
+        ("Is Month Start",               "INT"),
+        ("Is Month End",                 "INT"),
+        ("Week Of Year ISO",             "INT"),
+        ("ISO Year",                     "INT"),
+        ("Week Of Month",                "INT"),
+        ("Week Start Date",              "DATE"),
+        ("Week End Date",                "DATE"),
+        ("Day",                          "INT"),
+        ("Day Name",                     "VARCHAR(10)"),
+        ("Day Short",                    "VARCHAR(10)"),
+        ("Day Of Year",                  "INT"),
+        ("Day Of Week",                  "INT"),
+        ("Is Weekend",                   "INT"),
+        ("Is Business Day",              "INT"),
+        ("Next Business Day",            "DATE"),
+        ("Previous Business Day",        "DATE"),
+        ("Fiscal Year Start Year",       "INT"),
+        ("Fiscal Month Number",          "INT"),
+        ("Fiscal Quarter Number",        "INT"),
+        ("Fiscal Quarter Name",          "VARCHAR(20)"),
+        ("Fiscal Year Bin",              "VARCHAR(20)"),
+        ("Fiscal Year Month Number",     "INT"),
+        ("Fiscal Year Quarter Number",   "INT"),
+        ("Fiscal Year Start Date",       "DATE"),
+        ("Fiscal Year End Date",         "DATE"),
+        ("Fiscal Quarter Start Date",    "DATE"),
+        ("Fiscal Quarter End Date",      "DATE"),
+        ("Is Fiscal Year Start",         "INT"),
+        ("Is Fiscal Year End",           "INT"),
+        ("Is Fiscal Quarter Start",      "INT"),
+        ("Is Fiscal Quarter End",        "INT"),
+        ("Fiscal Year",                  "INT"),
+        ("Fiscal Year Label",            "VARCHAR(10)"),
+        ("Is Today",                     "INT"),
+        ("Is Current Year",              "INT"),
+        ("Is Current Month",             "INT"),
+        ("Is Current Quarter",           "INT"),
+        ("Current Day Offset",           "INT")
+    ],
+
+    "Currency": [
+        ("CurrencyKey", "INT"),
+        ("ISOCode",     "VARCHAR(10)"),
+        ("CurrencyName","VARCHAR(50)")
+    ],
+
+    # -----------------------
+    # FACTS
+    # -----------------------
     "Sales": [
         ("SalesOrderNumber",     "VARCHAR(30)"),
         ("SalesOrderLineNumber", "INT"),
@@ -94,29 +157,10 @@ STATIC_SCHEMAS = {
         ("IsOrderDelayed",       "INT")
     ],
 
-    "Product_Category": [
-        ("CategoryKey",    "INT"),
-        ("Category",       "VARCHAR(10)"),
-        ("Category Label", "VARCHAR(10)")
-    ],
-
-    "Product_Subcategory": [
-        ("ProductSubcategoryKey", "INT"),
-        ("Subcategory Label",     "VARCHAR(10)"),
-        ("Subcategory",           "VARCHAR(50)"),
-        ("CategoryKey",           "INT")
-    ],
-    "Currency": [
-        ("CurrencyKey", "INT"),
-        ("ISOCode", "NVARCHAR(10)"),
-        ("CurrencyName", "NVARCHAR(50)")
-    ],
-
     "Exchange_Rates": [
-        ("Date", "DATE"),
-        ("FromCurrency", "NVARCHAR(10)"),
-        ("ToCurrency", "NVARCHAR(10)"),
+        ("Date",         "DATE"),
+        ("FromCurrency", "VARCHAR(10)"),
+        ("ToCurrency",   "VARCHAR(10)"),
         ("ExchangeRate", "FLOAT")
-    ],
-
+    ]
 }

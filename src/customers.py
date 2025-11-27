@@ -5,7 +5,7 @@ from faker import Faker
 import csv
 
 # ============================================================
-# LOAD NAME DATA
+# Helper: Load name list
 # ============================================================
 
 def load_list(path):
@@ -19,17 +19,17 @@ def load_list(path):
 
 
 # ============================================================
-# LOAD REAL GEOGRAPHY
+# Load Real Geography (final DimGeography)
 # ============================================================
 
 def load_real_geography(config):
     """
-    Load the final DimGeography (already built by geography_builder.py)
-    and optionally apply continent/max_geos filters defined in config.
+    Load the final DimGeography parquet produced by geography_builder.py
+    and apply continent/max_geos filters from config.
     """
     geo_cfg = config["customers"]["geography_source"]
 
-    path = geo_cfg["path"]            # now points to FINAL geography.parquet
+    path = geo_cfg["path"]
     continent = geo_cfg["continent"]
     max_geos = geo_cfg["max_geos"]
 
@@ -38,7 +38,6 @@ def load_real_geography(config):
 
     df_geo = pd.read_parquet(path)
 
-    # Filtering by continent if configured
     if isinstance(continent, list):
         df_geo = df_geo[df_geo["Continent"].isin(continent)]
     elif continent != "All":
@@ -50,9 +49,8 @@ def load_real_geography(config):
     return df_geo.reset_index(drop=True)
 
 
-
 # ============================================================
-# CUSTOMER GENERATOR WITH REAL GEOGRAPHY
+# Synthetic Customers Generator
 # ============================================================
 
 def generate_synthetic_customers(
@@ -77,10 +75,7 @@ def generate_synthetic_customers(
     fake_us  = Faker("en_US")
     fake_eu  = Faker("en_GB")
 
-    # ============================================================
-    # LOAD NAME DATASETS
-    # ============================================================
-
+    # Load name datasets
     paths = {
         "us_male":     os.path.join(names_folder, "us_male_first.csv"),
         "us_female":   os.path.join(names_folder, "us_female_first.csv"),
@@ -99,36 +94,24 @@ def generate_synthetic_customers(
     eu_first  = load_list(paths["eu_first"])
     eu_last   = load_list(paths["eu_last"])
 
-    # ============================================================
-    # LOAD REAL GEOGRAPHY FROM PARQUET
-    # ============================================================
-
+    # Load geography
     df_geo = load_real_geography(config)
     geo_keys = df_geo["GeographyKey"].to_numpy()
 
-    # ============================================================
-    # CUSTOMER GENERATION
-    # ============================================================
-
+    # Customer base generation
     N = total_customers
     CustomerKey = np.arange(1, N + 1)
 
     Region = rng.choice(
         ["IN", "US", "EU"],
         size=N,
-        p=[
-            pct_india / 100,
-            pct_us / 100,
-            pct_eu / 100
-        ]
+        p=[pct_india / 100, pct_us / 100, pct_eu / 100]
     )
 
     IsOrg = rng.random(N) < (pct_org / 100)
-
     Gender = rng.choice(["M", "F"], size=N)
     Gender[IsOrg] = None
 
-    # Geography from REAL DimGeography
     GeographyKey = rng.choice(geo_keys, size=N, replace=True)
 
     # Names
@@ -165,10 +148,7 @@ def generate_synthetic_customers(
     safe_first = np.where(FirstName == None, "", FirstName.astype(str))
     safe_last  = np.where(LastName  == None, "", LastName.astype(str))
 
-    # ============================================================
-    # ORGANIZATIONS
-    # ============================================================
-
+    # Organizations
     company_pool = np.array([
         "TechNova", "BrightWave", "ZenithSystems", "PrimeSource",
         "ApexCorp", "GlobalWorks", "VertexInnovations",
@@ -182,10 +162,7 @@ def generate_synthetic_customers(
     safe_company = np.where(CompanyName == None, "", CompanyName.astype(str))
     OrgDomain = np.where(IsOrg, np.char.lower(safe_company) + ".com", None)
 
-    # ============================================================
-    # EMAILS
-    # ============================================================
-
+    # Emails
     Email = np.empty(N, dtype=object)
 
     person_mask = ~IsOrg
@@ -195,29 +172,21 @@ def generate_synthetic_customers(
         rng.integers(10, 99999, size=person_mask.sum()).astype(str) +
         "@example.com"
     )
-
     Email[IsOrg] = "info@" + OrgDomain[IsOrg]
 
-    # ============================================================
-    # DISPLAY NAME
-    # ============================================================
-
+    # Display name
     CustomerName = np.where(
         IsOrg,
         "Organization " + CustomerKey.astype(str),
         safe_first + " " + safe_last
     )
 
-    # ============================================================
-    # DEMOGRAPHICS
-    # ============================================================
-
+    # Demographics
     BirthDate = np.empty(N, dtype=object)
     if person_mask.sum():
         ages = rng.integers(18 * 365, 70 * 365, size=person_mask.sum())
         dates = pd.Timestamp("today").normalize() - pd.to_timedelta(ages, unit="D")
-        BirthDate_vals = pd.to_datetime(dates).date
-        BirthDate[person_mask] = BirthDate_vals
+        BirthDate[person_mask] = pd.to_datetime(dates).date
 
     BirthDate[IsOrg] = None
 
@@ -239,16 +208,14 @@ def generate_synthetic_customers(
     Occupation = np.where(
         IsOrg,
         None,
-        rng.choice([
-            "Professional", "Clerical", "Skilled",
-            "Service", "Executive"
-        ], size=N, p=[0.5, 0.2, 0.15, 0.1, 0.05])
+        rng.choice(
+            ["Professional", "Clerical", "Skilled", "Service", "Executive"],
+            size=N,
+            p=[0.5, 0.2, 0.15, 0.1, 0.05]
+        )
     )
 
-    # ============================================================
-    # FINAL DF
-    # ============================================================
-
+    # Final DF
     df = pd.DataFrame({
         "CustomerKey": CustomerKey,
         "CustomerName": CustomerName,
