@@ -442,6 +442,8 @@ def generate_sales_fact(
     while remaining > 0:
         batch = min(chunk_size, remaining)
 
+        print(f"Generating chunk {idx} with {batch:,} rows...", flush=True)
+
         df = generate_chunk_df(
             batch,
             date_pool,
@@ -470,6 +472,8 @@ def generate_sales_fact(
                 compression=compression
             )
 
+        print(f"✓ Finished chunk {idx} -> {out}", flush=True)
+        
         created.append(out)
         remaining -= batch
         idx += 1

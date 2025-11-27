@@ -40,13 +40,15 @@ STATIC_SCHEMAS = {
 
     "Product_Category": [
         ("ProductCategoryKey", "INT"),
-        ("ProductCategoryName","VARCHAR(100)")
+        ("ProductCategoryName","VARCHAR(100)"),
+        ("CategoryLabel",   "VARCHAR(10)")
     ],
 
     "Product_Subcategory": [
         ("ProductSubcategoryKey", "INT"),
-        ("ProductSubcategoryName","VARCHAR(100)"),
-        ("ProductCategoryKey",    "INT")
+        ("SubcategoryLabel","VARCHAR(10)"),
+        ("Subcategory","VARCHAR(100)"),
+        ("CategoryKey",    "INT")
     ],
 
     "Promotions": [
@@ -64,7 +66,14 @@ STATIC_SCHEMAS = {
         ("Status",           "VARCHAR(10)"),
         ("GeographyKey",     "INT"),
         ("OpenDate",         "DATE"),
-        ("CloseDate",        "DATE")
+        ("CloseDate",        "DATE"),
+        ("OpenFlag",         "BIT"),
+        ("SquarFootage",     "INT"),
+        ("EmployeeCount",    "INT"),
+        ("StoreManager",     "VARCHAR(20)"),
+        ("Phone",            "VARCHAR(20)"),
+        ("StoreDescription", "VARCHAR(MAX)"),
+        ("CloseReason",      "VARCHAR(MAX)"),
     ],
 
     "Dates": [
