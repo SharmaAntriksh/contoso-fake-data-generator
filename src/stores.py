@@ -3,7 +3,7 @@ import numpy as np
 
 
 def generate_store_table(
-    geography_parquet_path,
+    geography_parquet_path="./data/parquet_dims/geography.parquet",
     num_stores=200,
     opening_start="2018-01-01",
     opening_end="2023-01-31",
@@ -12,18 +12,24 @@ def generate_store_table(
 ):
     """
     Generate synthetic store dimension table.
-    Output structure and logic match original exactly.
+    GeographyKey now comes from the real DimGeography parquet.
+    Output structure and logic remain identical to original.
     """
     np.random.seed(seed)
 
     # --------------------------------------------------------
-    # Load geography
+    # Load real geography
     # --------------------------------------------------------
     geo = pd.read_parquet(geography_parquet_path)
-    if "GeographyKey" not in geo.columns:
-        raise ValueError("Parquet must contain GeographyKey column.")
 
-    geo_keys = geo["GeographyKey"].tolist()
+    if "GeographyKey" not in geo.columns:
+        raise ValueError(
+            f"geography.parquet must contain 'GeographyKey'. "
+            f"Found columns: {list(geo.columns)}"
+        )
+
+    # Use key list for sampling
+    geo_keys = geo["GeographyKey"].astype(int).tolist()
 
     # --------------------------------------------------------
     # Lookup values
@@ -33,7 +39,7 @@ def generate_store_table(
     close_reasons = ["Low Sales", "Lease Ended", "Renovation", "Moved Location"]
 
     # --------------------------------------------------------
-    # Base table
+    # Base table structure
     # --------------------------------------------------------
     df = pd.DataFrame({"StoreKey": range(1, num_stores + 1)})
 
@@ -45,7 +51,9 @@ def generate_store_table(
         store_status, num_stores, p=[0.85, 0.10, 0.05]
     )
 
-    # Geography assignment
+    # --------------------------------------------------------
+    # Assign GeographyKey from real DimGeography
+    # --------------------------------------------------------
     df["GeographyKey"] = np.random.choice(geo_keys, num_stores)
 
     # --------------------------------------------------------
@@ -60,27 +68,22 @@ def generate_store_table(
     )
 
     # --------------------------------------------------------
-    # Closing dates (only for closed stores)
+    # Closing dates
     # --------------------------------------------------------
     closing_ts = pd.Timestamp(closing_end).value // 10**9
 
     def generate_close_date(row):
         if row["Status"] != "Closed":
             return pd.NaT
-        # closing can only happen after opening
         open_ts = row["OpeningDate"].value // 10**9
-        return pd.to_datetime(
-            np.random.randint(open_ts, closing_ts), unit="s"
-        )
+        return pd.to_datetime(np.random.randint(open_ts, closing_ts), unit="s")
 
     df["ClosingDate"] = df.apply(generate_close_date, axis=1)
 
-    # Flag for "Open"
+    # --------------------------------------------------------
+    # Flags and attributes
+    # --------------------------------------------------------
     df["OpenFlag"] = (df["Status"] == "Open").astype(int)
-
-    # --------------------------------------------------------
-    # Basic store attributes
-    # --------------------------------------------------------
     df["SquareFootage"] = np.random.randint(2000, 10000, num_stores)
     df["EmployeeCount"] = np.random.randint(10, 120, num_stores)
     df["StoreManager"] = df["StoreKey"].apply(lambda x: f"Manager {x:04d}")
@@ -89,7 +92,7 @@ def generate_store_table(
     )
 
     # --------------------------------------------------------
-    # Descriptions & CloseReason
+    # Description & CloseReason
     # --------------------------------------------------------
     df["StoreDescription"] = (
         df["StoreType"] + " located in GeographyKey " + df["GeographyKey"].astype(str)

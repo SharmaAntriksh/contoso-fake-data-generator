@@ -38,10 +38,11 @@ STATIC_SCHEMAS = {
 
     "Geography": [
         ("GeographyKey", "INT NOT NULL"),
+        ("GeographyType","VARCHAR(50)"),
         ("City",         "VARCHAR(50)"),
         ("State",        "VARCHAR(50)"),
         ("Country",      "VARCHAR(50)"),
-        ("GeographyType","VARCHAR(50)")
+        ("Continent",    "VARCHAR(50)")
     ],
 
     "Stores": [

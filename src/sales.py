@@ -65,32 +65,27 @@ def build_weighted_date_pool(start, end, seed=42):
     weekdays = dates.weekday.values
     doy = dates.dayofyear.values
 
-    # Year-over-year growth
     unique_years = np.unique(years)
     idx_year = {y: i for i, y in enumerate(unique_years)}
     growth = 1.08
     yw = np.array([growth ** idx_year[y] for y in years], float)
 
-    # Monthly seasonality
     month_weights = {
         1:0.82, 2:0.92, 3:1.03, 4:0.98, 5:1.07, 6:1.12,
         7:1.18, 8:1.10, 9:0.96, 10:1.22, 11:1.48, 12:1.33
     }
     mw = np.array([month_weights[m] for m in months], float)
 
-    # Weekday weights
     weekday_weights = {
         0:0.86, 1:0.91, 2:1.00, 3:1.12, 4:1.19, 5:1.08, 6:0.78
     }
     wdw = np.array([weekday_weights[d] for d in weekdays], float)
 
-    # Annual spikes
     spike = np.ones(n)
     for s, e, f in [(140,170,1.28), (240,260,1.35), (310,350,1.72)]:
         mask = (doy >= s) & (doy <= e)
         spike[mask] *= f
 
-    # One-time seasonal windows
     ot = np.ones(n)
     for a, b, f in [
         ("2021-06-01","2021-10-31",0.70),
@@ -100,13 +95,10 @@ def build_weighted_date_pool(start, end, seed=42):
         mask = (dates >= A) & (dates <= B)
         ot[mask] *= f
 
-    # Noise
     noise = rng.uniform(0.95, 1.05, size=n)
 
-    # Combine weights
     weights = yw * mw * wdw * spike * ot * noise
 
-    # Blackout days 10–18%
     blackout_mask = rng.random(n) < rng.uniform(0.10, 0.18)
     weights[blackout_mask] = 0
 
@@ -116,7 +108,7 @@ def build_weighted_date_pool(start, end, seed=42):
 
 
 # ============================================================
-# Chunk Generator
+# Chunk Generator (patched for CurrencyKey)
 # ============================================================
 
 def generate_chunk_df(
@@ -131,6 +123,8 @@ def generate_chunk_df(
     promo_end_all,
     customers,
     seed,
+    store_to_geo,
+    geo_to_currency,
     no_discount_key=1
 ):
     rng = np.random.default_rng(seed)
@@ -145,6 +139,10 @@ def generate_chunk_df(
 
     # ----------------- Stores -----------------
     store_key_arr = store_keys[rng.integers(0, len(store_keys), size=n)]
+
+    # ----------------- CurrencyKey (NEW) -----------------
+    geo_arr = np.array([store_to_geo[s] for s in store_key_arr])
+    currency_arr = np.array([geo_to_currency[g] for g in geo_arr])
 
     # ----------------- Quantities -----------------
     qty = np.clip(rng.poisson(lam=3, size=n) + 1, 1, 10)
@@ -171,13 +169,11 @@ def generate_chunk_df(
         p=[0.55,0.25,0.10,0.06,0.04]
     )
 
-    # Expand to line level
     sales_order_num = np.repeat(order_ids, lines_per_order)[:n]
     line_num = np.concatenate([np.arange(1, c+1) for c in lines_per_order])[:n]
     customer_keys = np.repeat(order_customers, lines_per_order)[:n]
     order_dates_expanded = np.repeat(order_dates, lines_per_order)[:n]
 
-    # If short, patch
     if len(sales_order_num) < n:
         extra = n - len(sales_order_num)
         extra_dates = date_pool[rng.choice(len(date_pool), extra, p=date_prob)]
@@ -185,14 +181,14 @@ def generate_chunk_df(
             np.array([d.strftime("%Y%m%d") for d in extra_dates]) +
             np.char.zfill(rng.integers(0, 999999, extra).astype(str), 6)
         )
-
         sales_order_num = np.concatenate([sales_order_num, extra_ids])
-        customer_keys = np.concatenate([customer_keys,
-                customers[rng.integers(0, len(customers), extra)]])
+        customer_keys = np.concatenate([
+            customer_keys,
+            customers[rng.integers(0, len(customers), extra)]
+        ])
         line_num = np.concatenate([line_num, np.ones(extra, int)])
         order_dates_expanded = np.concatenate([order_dates_expanded, extra_dates])
 
-    # Trim to exact size
     sales_order_num = sales_order_num[:n]
     line_num = line_num[:n]
     customer_keys = customer_keys[:n]
@@ -223,7 +219,6 @@ def generate_chunk_df(
         default=0
     )
 
-    # Early deliveries
     early_mask = rng.random(n) < 0.10
     early_days = rng.integers(1, 3, n)
     delivery_offset = base_offset.copy()
@@ -237,7 +232,7 @@ def generate_chunk_df(
     )
 
     # ============================================================
-    # Promotions (vectorized)
+    # Promotions
     # ============================================================
 
     promo_keys = np.full(n, no_discount_key, int)
@@ -262,7 +257,10 @@ def generate_chunk_df(
     # ============================================================
 
     promo_disc = unit_price * (promo_pct / 100.0)
-    rnd_pct = rng.choice([0,5,10,15,20], n, p=[0.85,0.06,0.04,0.03,0.02])
+    rnd_pct = rng.choice(
+        [0,5,10,15,20], n,
+        p=[0.85,0.06,0.04,0.03,0.02]
+    )
     rnd_disc = unit_price * (rnd_pct / 100.0)
 
     discount_amt = np.maximum(promo_disc, rnd_disc)
@@ -273,7 +271,7 @@ def generate_chunk_df(
     net_price = unit_price - discount_amt
 
     # ============================================================
-    # DataFrame
+    # Final DataFrame (CurrencyKey patched)
     # ============================================================
 
     df = pd.DataFrame({
@@ -285,7 +283,7 @@ def generate_chunk_df(
         "StoreKey": store_key_arr,
         "ProductKey": product_keys,
         "PromotionKey": promo_keys,
-        "CurrencyKey": 1,
+        "CurrencyKey": currency_arr,            # PATCHED
         "CustomerKey": customer_keys,
         "Quantity": qty,
         "NetPrice": np.round(net_price, 2),
@@ -299,14 +297,16 @@ def generate_chunk_df(
                              .transform(lambda x: int((x == "Delayed").any()))
 
     # ============================================================
-    # Price Reduction  (comment fixed — logic unchanged)
+    # Price Reduction (unchanged)
     # ============================================================
 
     price_factor = np.random.default_rng(seed).uniform(0.43, 0.61)
     df["UnitPrice"] = np.round(df["UnitPrice"] * price_factor, 2)
     df["UnitCost"] = np.round(df["UnitCost"] * price_factor, 2)
     df["DiscountAmount"] = np.round(df["DiscountAmount"] * price_factor, 2)
-    df["NetPrice"] = np.round(df["UnitPrice"] - df["DiscountAmount"], 2).clip(0.01)
+    df["NetPrice"] = np.round(
+        df["UnitPrice"] - df["DiscountAmount"], 2
+    ).clip(0.01)
 
     return df
 
@@ -364,7 +364,7 @@ def merge_parquet_files(out_folder, merged_file_name, delete_chunks=True):
 
 
 # ============================================================
-# Main Function
+# Main Function (patched: currency mapping added)
 # ============================================================
 
 def generate_sales_fact(
@@ -384,13 +384,12 @@ def generate_sales_fact(
     seed=42,
     file_format="parquet"
 ):
-    # CSV mode must never merge parquet
     if file_format == "csv":
         merge_parquet = False
 
     ensure_dir(out_folder)
 
-    # Load customers
+    # Customers
     cust = load_parquet_column(
         f"{parquet_folder}/customers.parquet",
         "CustomerKey"
@@ -406,24 +405,70 @@ def generate_sales_fact(
 
     # Stores
     store_keys = load_parquet_column(
-        f"{parquet_folder}/stores.parquet",
+        os.path.join(parquet_folder, "stores.parquet"),
         "StoreKey"
     )
 
+    # ================================
+    # NEW: Currency + Geography Maps
+    # ================================
+    geo_df = load_parquet_df(
+        f"{parquet_folder}/geography.parquet",
+        ["GeographyKey", "Country"]
+    )
+
+    currency_df = load_parquet_df(
+        f"{parquet_folder}/currency.parquet",
+        ["CurrencyKey", "ISOCode"]
+    )
+
+    country_to_currency = {
+        "United States": "USD",
+        "USA": "USD",
+        "US": "USD",
+        "India": "INR",
+        "United Kingdom": "GBP",
+        "UK": "GBP",
+        "Germany": "EUR",
+        "France": "EUR",
+        "Spain": "EUR",
+    }
+    default_currency = "USD"
+
+    geo_df["ISOCode"] = geo_df["Country"].map(
+        country_to_currency
+    ).fillna(default_currency)
+
+    geo_df = geo_df.merge(currency_df, on="ISOCode", how="left")
+
+    geo_to_currency = dict(
+        zip(geo_df["GeographyKey"], geo_df["CurrencyKey"])
+    )
+
+    store_df = load_parquet_df(
+        f"{parquet_folder}/stores.parquet",
+        ["StoreKey", "GeographyKey"]
+    )
+    store_to_geo = dict(zip(store_df["StoreKey"], store_df["GeographyKey"]))
+
     # Promotions
     promo_df = load_parquet_df(f"{parquet_folder}/promotions.parquet")
-    promo_df["StartDate"] = promo_df["StartDate"].values.astype("datetime64[D]")
-    promo_df["EndDate"]   = promo_df["EndDate"].values.astype("datetime64[D]")
+    promo_df["StartDate"] = pd.to_datetime(promo_df["StartDate"]).dt.normalize()
+    promo_df["EndDate"]   = pd.to_datetime(promo_df["EndDate"]).dt.normalize()
+
 
     promo_keys_all  = promo_df["PromotionKey"].to_numpy(int)
     promo_pct_all   = promo_df["DiscountPct"].to_numpy(float)
     promo_start_all = promo_df["StartDate"].to_numpy("datetime64[D]")
     promo_end_all   = promo_df["EndDate"].to_numpy("datetime64[D]")
 
-    # Weighted date pool
+    # Weighted dates
     date_pool, date_prob = build_weighted_date_pool(start_date, end_date, seed)
 
-    # Chunk loop
+    # ============================================================
+    # Loop
+    # ============================================================
+
     remaining = total_rows
     idx = 0
     created = []
@@ -442,7 +487,9 @@ def generate_sales_fact(
             promo_start_all,
             promo_end_all,
             customers,
-            np.random.randint(1, 1 << 30)
+            np.random.randint(1, 1 << 30),
+            store_to_geo,          # NEW
+            geo_to_currency        # NEW
         )
 
         if file_format == "csv":
@@ -461,7 +508,6 @@ def generate_sales_fact(
         remaining -= batch
         idx += 1
 
-    # Merge parquet chunks
     if file_format == "parquet" and merge_parquet:
         merge_parquet_files(
             out_folder,

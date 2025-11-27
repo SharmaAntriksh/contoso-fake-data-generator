@@ -12,6 +12,9 @@ from src.output_utils import clear_folder, create_final_output_folder
 from src.generate_bulk_insert_sql import generate_bulk_insert_script
 from src.generate_create_table_scripts import generate_all_create_tables
 
+from src.currency import generate_currency_dimension
+from src.exchange_rates import generate_exchange_rate_table
+
 
 # ---------------------------------------------------------
 # Helpers
@@ -32,10 +35,6 @@ def validate_config(cfg, section, required_keys):
 
 
 def normalize_sales_config(cfg):
-    """
-    Removes parquet-only config keys when generating CSV.
-    Ensures sales generator receives a clean dictionary.
-    """
     if cfg.get("file_format") == "csv":
         parquet_only = ("row_group_size", "compression", "merge_parquet", "merged_file")
         cfg = {k: v for k, v in cfg.items() if k not in parquet_only}
@@ -52,25 +51,20 @@ def generate_dimensions(cfg, parquet_dims: Path):
     store_cfg = cfg["stores"]
     date_cfg = cfg["dates"]
 
+    # -----------------------------------------------------
+    # Customers + Geography
+    # -----------------------------------------------------
     with stage("Generating Customers and Geography"):
-        customers, geo = generate_synthetic_customers(
-            total_customers=cust_cfg["total_customers"],
-            total_geos=cust_cfg["total_geos"],
-            pct_india=cust_cfg["pct_india"],
-            pct_us=cust_cfg["pct_us"],
-            pct_eu=cust_cfg["pct_eu"],
-            pct_org=cust_cfg["pct_org"],
-            seed=cust_cfg["seed"],
-            names_folder=cust_cfg["names_folder"],
-            save_customer_csv=False,
-            save_geography_csv=False
-        )
+        customers, geo = generate_synthetic_customers(cfg)
         customers.to_parquet(parquet_dims / "customers.parquet", index=False)
         geo.to_parquet(parquet_dims / "geography.parquet", index=False)
 
+    # -----------------------------------------------------
+    # Promotions
+    # -----------------------------------------------------
     with stage("Generating Promotions"):
         promotions = generate_promotions_catalog(
-            years=range(promo_cfg["years"][0], promo_cfg["years"][1] + 1),
+            years=promo_cfg["years"],   # FIXED
             num_seasonal=promo_cfg["num_seasonal"],
             num_clearance=promo_cfg["num_clearance"],
             num_limited=promo_cfg["num_limited"],
@@ -78,6 +72,9 @@ def generate_dimensions(cfg, parquet_dims: Path):
         )
         promotions.to_parquet(parquet_dims / "promotions.parquet", index=False)
 
+    # -----------------------------------------------------
+    # Stores
+    # -----------------------------------------------------
     with stage("Generating Stores"):
         stores = generate_store_table(
             geography_parquet_path=store_cfg["geography_path"],
@@ -89,6 +86,9 @@ def generate_dimensions(cfg, parquet_dims: Path):
         )
         stores.to_parquet(parquet_dims / "stores.parquet", index=False)
 
+    # -----------------------------------------------------
+    # Dates
+    # -----------------------------------------------------
     with stage("Generating Dates"):
         dates = generate_date_table(
             date_cfg["start_date"],
@@ -96,6 +96,30 @@ def generate_dimensions(cfg, parquet_dims: Path):
             date_cfg["fiscal_month_offset"]
         )
         dates.to_parquet(parquet_dims / "dates.parquet", index=False)
+
+    # -----------------------------------------------------
+    # Currency Dimension
+    # -----------------------------------------------------
+    with stage("Generating Currency Dimension"):
+        cur_cfg = cfg["exchange_rates"]
+        currency_df = generate_currency_dimension(cur_cfg["currencies"])
+        currency_df.to_parquet(parquet_dims / "currency.parquet", index=False)
+
+    # -----------------------------------------------------
+    # Exchange Rates
+    # -----------------------------------------------------
+    with stage("Generating Exchange Rates"):
+        exch_cfg = cfg["exchange_rates"]
+        fx_df = generate_exchange_rate_table(
+            exch_cfg["start_date"],
+            exch_cfg["end_date"],
+            exch_cfg["currencies"],
+            exch_cfg["base_currency"],
+            exch_cfg["volatility"],
+            exch_cfg["seed"]
+        )
+        fx_df.to_parquet(parquet_dims / "exchange_rates.parquet", index=False)
+
 
 
 # ---------------------------------------------------------
@@ -116,6 +140,10 @@ def main():
     parquet_dims = Path(sales_cfg["parquet_folder"])
     fact_out = Path(sales_cfg["out_folder"])
 
+    # Ensure output folders exist (NEW)
+    parquet_dims.mkdir(parents=True, exist_ok=True)
+    fact_out.mkdir(parents=True, exist_ok=True)
+
     validate_config(sales_cfg, "sales", ["total_rows", "chunk_size", "file_format"])
 
     # ----------------------------------
@@ -124,12 +152,11 @@ def main():
     generate_dimensions(cfg, parquet_dims)
 
     # ----------------------------------
-    # Sales Fact Generation
+    # Sales Fact
     # ----------------------------------
     with stage("Generating Sales"):
         clear_folder(fact_out)
 
-        # Safety: CSV mode should not merge or delete chunks
         if sales_cfg.get("file_format") == "csv":
             sales_cfg["merge_parquet"] = False
             sales_cfg["delete_chunks"] = False

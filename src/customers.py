@@ -4,17 +4,12 @@ import numpy as np
 from faker import Faker
 import csv
 
-
 # ============================================================
-# Load a name list file
+# LOAD NAME DATA
 # ============================================================
 
 def load_list(path):
-    """
-    Load names from a CSV file (single column).
-    Keeps only alphabetic names with allowed punctuation.
-    Returns title-cased unique values.
-    """
+    """Load names from a CSV file (single column)."""
     if not os.path.isfile(path):
         raise FileNotFoundError(f"Missing file: {path}")
 
@@ -24,23 +19,50 @@ def load_list(path):
 
 
 # ============================================================
-# MAIN GENERATOR
+# LOAD REAL GEOGRAPHY
+# ============================================================
+
+def load_real_geography(config):
+    geo_cfg = config["customers"]["geography_source"]
+
+    path = geo_cfg["path"]
+    continent = geo_cfg["continent"]
+    max_geos = geo_cfg["max_geos"]
+
+    df_geo = pd.read_parquet(path)
+
+    # Continent filtering (supports string or list)
+    if isinstance(continent, list):
+        df_geo = df_geo[df_geo["Continent"].isin(continent)]
+    elif continent != "All":
+        df_geo = df_geo[df_geo["Continent"] == continent]
+
+    # Row limit
+    if max_geos > 0:
+        df_geo = df_geo.head(max_geos)
+
+    return df_geo.reset_index(drop=True)
+
+
+# ============================================================
+# CUSTOMER GENERATOR WITH REAL GEOGRAPHY
 # ============================================================
 
 def generate_synthetic_customers(
-    total_customers=1000,
-    total_geos=40,
-    pct_india=1,
-    pct_us=60,
-    pct_eu=39,
-    pct_org=2,
-    seed=42,
-    names_folder="./data/customer_names",
-    save_geography_csv=False,
+    config,
     save_customer_csv=False,
-    out_geo="SyntheticGeography.csv",
     out_cust="SyntheticCustomers.csv"
 ):
+    cust_cfg = config["customers"]
+
+    total_customers = cust_cfg["total_customers"]
+    pct_india = cust_cfg["pct_india"]
+    pct_us = cust_cfg["pct_us"]
+    pct_eu = cust_cfg["pct_eu"]
+    pct_org = cust_cfg["pct_org"]
+    seed = cust_cfg["seed"]
+    names_folder = cust_cfg["names_folder"]
+
     rng = np.random.default_rng(seed)
 
     fake     = Faker()
@@ -51,8 +73,6 @@ def generate_synthetic_customers(
     # ============================================================
     # LOAD NAME DATASETS
     # ============================================================
-
-    print("Loading name datasets...")
 
     paths = {
         "us_male":     os.path.join(names_folder, "us_male_first.csv"),
@@ -72,36 +92,12 @@ def generate_synthetic_customers(
     eu_first  = load_list(paths["eu_first"])
     eu_last   = load_list(paths["eu_last"])
 
-    print(f"  US male names: {len(us_male):,}")
-    print(f"  US female names: {len(us_female):,}")
-    print(f"  US surnames: {len(us_last):,}")
-    print(f"  IN first names: {len(in_first):,}")
-    print(f"  IN last names: {len(in_last):,}")
-    print(f"  EU first names: {len(eu_first):,}")
-    print(f"  EU last names: {len(eu_last):,}")
-
     # ============================================================
-    # GEOGRAPHY
+    # LOAD REAL GEOGRAPHY FROM PARQUET
     # ============================================================
 
-    GEO_City    = [fake.city() for _ in range(total_geos)]
-    GEO_State   = [fake.state() for _ in range(total_geos)]
-    GEO_Country = [fake.country() for _ in range(total_geos)]
-    GEO_Type    = rng.choice(["Urban", "Suburban", "Rural"],
-                             size=total_geos,
-                             p=[0.6, 0.25, 0.15])
-
-    df_geo = pd.DataFrame({
-        "GeographyKey": np.arange(1, total_geos + 1),
-        "City": GEO_City,
-        "State": GEO_State,
-        "Country": GEO_Country,
-        "GeographyType": GEO_Type
-    })
-
-    if save_geography_csv:
-        df_geo.to_csv(out_geo, index=False)
-        print(f"Saved {out_geo}")
+    df_geo = load_real_geography(config)
+    geo_keys = df_geo["GeographyKey"].to_numpy()
 
     # ============================================================
     # CUSTOMER GENERATION
@@ -110,20 +106,29 @@ def generate_synthetic_customers(
     N = total_customers
     CustomerKey = np.arange(1, N + 1)
 
-    Region = rng.choice(["IN", "US", "EU"], size=N,
-                        p=[pct_india / 100, pct_us / 100, pct_eu / 100])
+    Region = rng.choice(
+        ["IN", "US", "EU"],
+        size=N,
+        p=[
+            pct_india / 100,
+            pct_us / 100,
+            pct_eu / 100
+        ]
+    )
 
     IsOrg = rng.random(N) < (pct_org / 100)
 
     Gender = rng.choice(["M", "F"], size=N)
-    Gender[IsOrg] = None  # org has no gender
+    Gender[IsOrg] = None
 
-    GeographyKey = rng.integers(1, total_geos + 1, size=N)
+    # Geography from REAL DimGeography
+    GeographyKey = rng.choice(geo_keys, size=N, replace=True)
 
+    # Names
     FirstName = np.empty(N, dtype=object)
     LastName  = np.empty(N, dtype=object)
 
-    # LAST NAMES BY REGION
+    # Last names
     mask = (Region == "IN") & (~IsOrg)
     LastName[mask] = rng.choice(in_last, size=mask.sum())
 
@@ -135,7 +140,7 @@ def generate_synthetic_customers(
 
     LastName[IsOrg] = None
 
-    # FIRST NAMES
+    # First names
     mask = (Region == "IN") & (~IsOrg)
     FirstName[mask] = rng.choice(in_first, size=mask.sum())
 
@@ -154,7 +159,7 @@ def generate_synthetic_customers(
     safe_last  = np.where(LastName  == None, "", LastName.astype(str))
 
     # ============================================================
-    # ORGANIZATION FIELDS
+    # ORGANIZATIONS
     # ============================================================
 
     company_pool = np.array([
@@ -164,14 +169,14 @@ def generate_synthetic_customers(
     ])
 
     CompanyName = np.empty(N, dtype=object)
-    CompanyName[IsOrg]  = company_pool[rng.integers(0, len(company_pool), size=IsOrg.sum())]
+    CompanyName[IsOrg] = company_pool[rng.integers(0, len(company_pool), size=IsOrg.sum())]
     CompanyName[~IsOrg] = None
 
     safe_company = np.where(CompanyName == None, "", CompanyName.astype(str))
-    OrgDomain    = np.where(IsOrg, np.char.lower(safe_company) + ".com", None)
+    OrgDomain = np.where(IsOrg, np.char.lower(safe_company) + ".com", None)
 
     # ============================================================
-    # EMAIL ADDRESS
+    # EMAILS
     # ============================================================
 
     Email = np.empty(N, dtype=object)
@@ -201,8 +206,6 @@ def generate_synthetic_customers(
     # ============================================================
 
     BirthDate = np.empty(N, dtype=object)
-    person_mask = ~IsOrg
-
     if person_mask.sum():
         ages = rng.integers(18 * 365, 70 * 365, size=person_mask.sum())
         dates = pd.Timestamp("today").normalize() - pd.to_timedelta(ages, unit="D")
@@ -229,12 +232,14 @@ def generate_synthetic_customers(
     Occupation = np.where(
         IsOrg,
         None,
-        rng.choice(["Professional", "Clerical", "Skilled", "Service", "Executive"],
-                   size=N, p=[0.5, 0.2, 0.15, 0.1, 0.05])
+        rng.choice([
+            "Professional", "Clerical", "Skilled",
+            "Service", "Executive"
+        ], size=N, p=[0.5, 0.2, 0.15, 0.1, 0.05])
     )
 
     # ============================================================
-    # FINAL CUSTOMER DATAFRAME
+    # FINAL DF
     # ============================================================
 
     df = pd.DataFrame({
@@ -253,11 +258,7 @@ def generate_synthetic_customers(
         "GeographyKey": GeographyKey,
     })
 
-    # Save
     if save_customer_csv:
         df.to_csv(out_cust, index=False, encoding="utf-8", quoting=csv.QUOTE_ALL)
-        print(f"Saved {out_cust}")
-
-    print(f"\nGenerated {len(df):,} synthetic customers.")
 
     return df, df_geo

@@ -1,27 +1,29 @@
 {
   "customers": {
     "total_customers": 41618,
-    "total_geos": 200,
+
     "pct_india": 1,
     "pct_us": 60,
     "pct_eu": 39,
     "pct_org": 5,
     "seed": 42,
-    "names_folder": "./data/customer_names"
+    "names_folder": "./data/customer_names",
+
+    "geography_source": {
+      "path": "./data/parquet_dims/geography.parquet",
+      "continent": "All",
+      "max_geos": 200
+    }
   },
+
   "promotions": {
-    "years": [
-      2021,
-      2022,
-      2023,
-      2024,
-      2025
-    ],
+    "years": [2021, 2022, 2023, 2024, 2025],
     "num_seasonal": 20,
     "num_clearance": 8,
     "num_limited": 12,
     "seed": 42
   },
+
   "stores": {
     "geography_path": "./data/parquet_dims/geography.parquet",
     "num_stores": 500,
@@ -30,16 +32,20 @@
     "closing_end": "2025-12-31",
     "seed": 42
   },
+
   "dates": {
     "start_date": "2021-01-01",
     "end_date": "2026-12-31",
     "fiscal_month_offset": 5
   },
+
   "sales": {
     "parquet_folder": "./data/parquet_dims",
     "out_folder": "./data/fact_out",
+
     "total_rows": 50000,
     "chunk_size": 100000,
+
     "start_date": "2021-01-01",
     "end_date": "2025-12-31",
 
@@ -48,11 +54,21 @@
     "merge_parquet": true,
     "merged_file": "sales.parquet",
     "delete_chunks": true,
+
     "row_group_size": 2000000,
     "compression": "snappy",
 
     "heavy_pct": 5,
     "heavy_mult": 5,
+    "seed": 42
+  },
+
+  "exchange_rates": {
+    "currencies": ["USD", "EUR", "INR", "GBP"],
+    "base_currency": "USD",
+    "start_date": "2021-01-01",
+    "end_date": "2025-12-31",
+    "volatility": 0.02,
     "seed": 42
   }
 }
