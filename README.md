@@ -1,118 +1,120 @@
-# 📦 **contoso-fake-generator**
-**A fully modular, configurable synthetic dataset generator inspired by Microsoft's Contoso Retail Data Warehouse.**
+# Contoso Fake Data Generator – README
 
-Generate high-quality **fact + dimension** datasets that mimic real retail behavior, with support for promotions, weighted customer behavior, store lifecycle, seasonality, and realistic delivery patterns.
+A fast, configurable data generator that produces a full retail analytics dataset:
 
-Perfect for:
-- Power BI demos  
-- DAX training  
-- SQL practice  
-- Data modeling exercises  
-- Benchmarking ETL tools  
-- Building sample retail dashboards  
+- **Dimension tables** (Customers, Stores, Dates, Geography, Promotions, Currency, Exchange Rates)  
+- **Sales Fact table** (millions+ rows, chunked, parquet/CSV/Delta)  
+- **SQL bulk insert scripts & CREATE TABLE scripts**  
+- **Smart versioning** — dimensions regenerate only when their config changes  
+- **Modular pipeline architecture** for easy extension  
 
----
+## Features
 
-## 🚀 Features
+### Modular ETL-like pipeline  
+The generator runs in three stages:  
+1. **Dimensions pipeline**  
+2. **Sales fact pipeline**  
+3. **Packaging + SQL + final output**  
 
-### ✔ **Rich Dimension Generators**
-- **Customers** with geo distribution + weighted behavior  
-- **Stores** with open/close date windows  
-- **Promotions** with timelines + discount logic  
-- **Dates** table with fiscal calendar support  
+### Supports multiple output formats  
+- CSV  
+- Parquet  
+- Delta Parquet  
 
-### ✔ **Sales Fact Generator**
-- Weighted dates (year growth, seasonality, weekday effects)
-- Automatic no-sales days (5–10%)
-- Promotion assignment based on active date ranges
-- Realistic:
-  - quantity distributions  
-  - pricing + cost  
-  - discount logic  
-  - order → line expansion  
-  - delivery delays / early delivery  
+### Efficient chunked generation  
+Handles millions of sales rows without large memory usage.
 
-### ✔ **Chunk-based large file generation**
-Generate **millions** of rows without running out of memory.
-
-### ✔ **Merge or chunk output**
-Optionally merge into a single `sales.parquet` file.
-
-### ✔ **Config-driven pipeline**
-Modify **config.json** to create customized dataset variants.
-
-### ✔ **Automated output packaging**
-Creates a final folder such as:
+### Auto-packaged output  
+Final output folder includes:
 
 ```
-Customer82K Sales600K 2025-11-26_14-32-10/
+facts/
+dims/
+bulk_insert_*.sql
+create_tables.sql
 ```
 
-And copies all generated parquet files inside it.
+### Smart versioning  
+Dimensions only regenerate when config changes — saves time on large datasets.
 
----
-
-## 📁 Project Structure
+## Project Architecture
 
 ```
-contoso-fake-generator/
-│ main.py
-│ config.json
-│ README.md
+src/
+├── pipeline/
+│   ├── config.py
+│   ├── dimensions.py
+│   ├── sales_pipeline.py
+│   ├── packaging.py
 │
-├─ src/
-│   ├─ customers.py
-│   ├─ stores.py
-│   ├─ promotions.py
-│   ├─ dates.py
-│   ├─ sales.py
-│   ├─ output_utils.py
-│   └─ __init__.py
+├── dimensions/
+│   ├── customers.py
+│   ├── promotions.py
+│   ├── stores.py
+│   ├── dates.py
+│   ├── currency.py
+│   ├── exchange_rates.py
+│   ├── geography_builder.py
 │
-├─ data/
-│   ├─ parquet_dims/
-│   ├─ fact_out/
-│   └─ Names/
+├── facts/
+│   ├── sales.py
 │
-└─ generated_datasets/
+├── sql/
+│   ├── generate_bulk_insert_sql.py
+│   ├── generate_create_table_scripts.py
+│
+├── utils/
+│   ├── output_utils.py
+│   ├── versioning.py
+│   ├── static_schemas.py
+│
+└── main.py
 ```
 
----
+## How the Pipeline Works
 
-## 🔧 Installation
+### 1. Load & validate config  
+Handled by `pipeline/config.py`.
 
-```
-python -m venv .venv
-.\.venv\Scripts\activate
-pip install -r requirements.txt
-```
+### 2. Generate dimensions  
+Orchestrated by `pipeline/dimensions.py`.
 
----
+### 3. Generate Sales Fact  
+Handled by `pipeline/sales_pipeline.py`.
 
-## ▶️ Usage
+### 4. Package final output  
+Handled by `pipeline/packaging.py`.
 
-```
+## How to Run
+
+```bash
 python main.py
 ```
 
-Output will appear inside:
+## Configuration (config.json)
 
+Example:
+
+```json
+{
+  "sales": {
+    "total_rows": 5000000,
+    "chunk_size": 250000,
+    "file_format": "parquet",
+    "parquet_folder": "output/parquet_dims",
+    "out_folder": "output/facts",
+    "merge_parquet": true,
+    "write_delta": false
+  },
+  "customers": {
+    "geography_source": {
+      "path": "data/DimGeography.parquet",
+      "max_geos": 10000
+    }
+  }
+}
 ```
-generated_datasets/
-```
 
----
+## Extending the Project
 
-## 🛠 Extending the Generator
-Feel free to add:
-- Products
-- Inventory
-- Returns
-- Employees
-- Territories
-- More facts and dimensions
-
----
-
-## 🧾 License
-MIT License.
+Add new dimensions or facts by simply dropping new modules into the correct folder and updating the pipeline modules accordingly.
