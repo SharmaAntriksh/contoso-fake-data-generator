@@ -1,65 +1,84 @@
-import time
+# sales_pipeline.py — cleaned + dependency-aware
+
 from pathlib import Path
-from contextlib import contextmanager
-
-from src.facts.sales import generate_sales_fact
-from src.utils.output_utils import clear_folder
-from src.utils.logging_utils import stage, info, skip, done, work
+from src.utils.logging_utils import info, skip, stage, done
+from src.utils.versioning import should_regenerate, save_version
+from src.facts.sales.sales import generate_sales_fact
 
 
-def run_sales_pipeline(sales_cfg, fact_out: Path):
+def run_sales_pipeline(sales_cfg, fact_out: Path, parquet_dims: Path, cfg):
     """
-    Handles: clearing output folder, adjusting CSV mode,
-    setting delta defaults, and calling generate_sales_fact().
+    Fully dependency-aware Sales pipeline.
+    Sales regenerates automatically if ANY upstream dimension changes.
     """
 
-    with stage("Generating Sales"):
-        # Clear fact folder before generating new data
-        clear_folder(fact_out)
+    # Path helper
+    def out(name):
+        return parquet_dims / f"{name}.parquet"
 
-        # CSV mode disables parquet/delta related options
-        if sales_cfg.get("file_format") == "csv":
-            sales_cfg["merge_parquet"] = False
-            sales_cfg["delete_chunks"] = False
-            sales_cfg["write_pyarrow"] = False
-            sales_cfg.setdefault("write_delta", False)
+    # ------------------------------------------------------------
+    # Dependency checks
+    # ------------------------------------------------------------
 
-        # Ensure delta folder exists if delta output is requested
-        sales_cfg.setdefault(
-            "delta_output_folder",
-            str(Path(sales_cfg["out_folder"]) / "delta")
-        )
+    # Common helper
+    def changed(name, section):
+        return should_regenerate(name, section, out(name))
 
-        # Run actual fact generation
-        generate_sales_fact(
-            parquet_folder=sales_cfg["parquet_folder"],
-            out_folder=sales_cfg["out_folder"],
+    geography_changed      = changed("geography", cfg["geography"])
+    customers_changed      = changed("customers", cfg["customers"])
+    stores_changed         = changed("stores", cfg["stores"])
+    promotions_changed     = changed("promotions", cfg["promotions"])
+    dates_changed          = changed("dates", cfg["dates"])
+    currency_changed       = changed("currency", cfg["exchange_rates"])
+    exchange_rates_changed = changed("exchange_rates", cfg["exchange_rates"])
 
-            total_rows=sales_cfg["total_rows"],
-            chunk_size=sales_cfg["chunk_size"],
+    # Sales should regenerate if ANY dimension changed
+    sales_dependencies_changed = any([
+        geography_changed,
+        customers_changed,
+        promotions_changed,
+        stores_changed,
+        dates_changed,
+        currency_changed,
+        exchange_rates_changed,
+    ])
 
-            start_date=sales_cfg["start_date"],
-            end_date=sales_cfg["end_date"],
+    # ------------------------------------------------------------
+    # Run or skip Sales regeneration
+    # ------------------------------------------------------------
+    sales_out = fact_out / "sales.parquet"
 
-            delete_chunks=sales_cfg.get("delete_chunks", False),
-            heavy_pct=sales_cfg.get("heavy_pct", 5),
-            heavy_mult=sales_cfg.get("heavy_mult", 5),
-            seed=sales_cfg.get("seed", 42),
+    if sales_dependencies_changed or should_regenerate("sales", sales_cfg, sales_out):
+        info("Dependency triggered: Sales will regenerate.")
 
-            file_format=sales_cfg["file_format"],
-            row_group_size=sales_cfg.get("row_group_size"),
-            compression=sales_cfg.get("compression"),
-            merge_parquet=sales_cfg.get("merge_parquet"),
-            merged_file=sales_cfg.get("merged_file"),
+        with stage("Generating Sales"):
+            generate_sales_fact(
+                parquet_folder=sales_cfg["parquet_folder"],
+                out_folder=sales_cfg["out_folder"],
+                total_rows=sales_cfg["total_rows"],
+                chunk_size=sales_cfg["chunk_size"],
+                start_date=sales_cfg["start_date"],
+                end_date=sales_cfg["end_date"],
+                row_group_size=sales_cfg["row_group_size"],
+                compression=sales_cfg["compression"],
+                merge_parquet=sales_cfg["merge_parquet"],
+                merged_file=sales_cfg["merged_file"],
+                delete_chunks=sales_cfg["delete_chunks"],
+                heavy_pct=sales_cfg["heavy_pct"],
+                heavy_mult=sales_cfg["heavy_mult"],
+                seed=sales_cfg["seed"],
+                file_format=sales_cfg["file_format"],
+                workers=sales_cfg["workers"],
+                tune_chunk=sales_cfg["tune_chunk"],
+                write_delta=sales_cfg["write_delta"],
+                delta_output_folder=sales_cfg["delta_output_folder"],
+                skip_order_cols=sales_cfg.get("skip_order_cols", False),
+                write_pyarrow=sales_cfg.get("write_pyarrow", True),
+            )
 
-            workers=sales_cfg.get("workers"),
-            write_pyarrow=sales_cfg.get("write_pyarrow", True),
-            tune_chunk=sales_cfg.get("tune_chunk", False),
+        save_version("sales", sales_cfg)
 
-            # DELTA SUPPORT
-            write_delta=sales_cfg.get("write_delta", False),
-            delta_output_folder=sales_cfg.get("delta_output_folder"),
-            skip_order_cols=sales_cfg.get("skip_order_cols", False),
-        )
+    else:
+        skip("Sales up-to-date; skipping regeneration")
 
-    return fact_out
+    done("Sales pipeline complete.")

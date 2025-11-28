@@ -1,9 +1,10 @@
-# sales_logic.py
 import numpy as np
 import pandas as pd
 import pyarrow as pa
 
-# Globals assigned by worker initializer
+# ============================================================
+# GLOBAL WORKER STATE (injected via bind_globals)
+# ============================================================
 _G_skip_order_cols = None
 _G_product_np = None
 _G_customers = None
@@ -21,17 +22,22 @@ _G_geo_to_currency = None
 
 
 def bind_globals(gdict):
-    """Worker initializer will inject globals here."""
+    """Multiprocessing worker initializer inserts globals."""
     globals().update(gdict)
 
 
+# ============================================================
+# CHUNK BUILDER
+# ============================================================
 def _build_chunk_table(n, seed, no_discount_key=1):
     """
-    Optimized chunk builder — vectorized and memory-safe.
+    Build n synthetic sales rows.
+    Highly vectorized, minimal Python branching.
     """
     rng = np.random.default_rng(seed)
     skip_cols = _G_skip_order_cols
 
+    # ---- references ----
     product_np = _G_product_np
     customers = _G_customers
     date_pool = _G_date_pool
@@ -52,14 +58,18 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     # ---------------------------------------------------------
     prod_idx = rng.integers(0, len(product_np), size=n)
     prods = product_np[prod_idx]
+
     product_keys = prods[:, 0].astype(np.int64)
     unit_price = prods[:, 1].astype(np.float64)
     unit_cost = prods[:, 2].astype(np.float64)
 
     # ---------------------------------------------------------
-    # STORES -> GEO -> CURRENCY mapping
+    # STORE → GEO → CURRENCY
+    # Vectorized if arrays available, fallback if dicts needed.
     # ---------------------------------------------------------
-    store_key_arr = store_keys[rng.integers(0, len(store_keys), size=n)].astype(np.int64)
+    store_key_arr = store_keys[
+        rng.integers(0, len(store_keys), size=n)
+    ].astype(np.int64)
 
     try:
         if st2g_arr is not None and g2c_arr is not None:
@@ -67,40 +77,57 @@ def _build_chunk_table(n, seed, no_discount_key=1):
             currency_arr = g2c_arr[geo_arr]
         else:
             geo_arr = np.array([store_to_geo[s] for s in store_key_arr])
-            currency_arr = np.array([geo_to_currency[g] for g in geo_arr], dtype=np.int64)
+            currency_arr = np.array(
+                [geo_to_currency[g] for g in geo_arr], dtype=np.int64
+            )
     except Exception:
         geo_arr = np.array([store_to_geo[s] for s in store_key_arr])
-        currency_arr = np.array([geo_to_currency[g] for g in geo_arr], dtype=np.int64)
+        currency_arr = np.array(
+            [geo_to_currency[g] for g in geo_arr], dtype=np.int64
+        )
 
     # ---------------------------------------------------------
     # QUANTITY
     # ---------------------------------------------------------
     qty = np.clip(rng.poisson(3, n) + 1, 1, 10).astype(np.int64)
 
-    # --- ORDER GROUPING (fast vectorized)
+    # ---------------------------------------------------------
+    # ORDER GROUPING
+    # ---------------------------------------------------------
     avg_lines = 2.0
     order_count = max(1, int(n / avg_lines))
 
-    suffix = np.char.zfill(rng.integers(0, 999999, order_count).astype(str), 6)
+    # suffix & date
+    suffix = np.char.zfill(
+        rng.integers(0, 999999, order_count).astype(str), 6
+    )
     od_idx = rng.choice(len(date_pool), size=order_count, p=date_prob)
     order_dates = date_pool[od_idx]
 
-    # string ids for order number
-    order_dates_str = np.array([str(d.astype("datetime64[D]"))[:10].replace("-", "") for d in order_dates])
-    order_ids_str = np.char.add(order_dates_str, suffix)
+    # string & int IDs
+    date_str = np.array(
+        [str(d.astype("datetime64[D]"))[:10].replace("-", "") for d in order_dates]
+    )
+    order_ids_str = np.char.add(date_str, suffix)
     order_ids_int = order_ids_str.astype(np.int64)
 
+    # customers
     cust_idx = rng.integers(0, len(customers), order_count)
     order_customers = customers[cust_idx].astype(np.int64)
 
-    lines_per_order = rng.choice([1, 2, 3, 4, 5], order_count, p=[0.55, 0.25, 0.10, 0.06, 0.04])
+    # lines per order
+    lines_per_order = rng.choice(
+        [1, 2, 3, 4, 5],
+        order_count,
+        p=[0.55, 0.25, 0.10, 0.06, 0.04],
+    )
 
-    # build expanded arrays (may overshoot)
     expanded_len = lines_per_order.sum()
     order_idx = np.repeat(np.arange(order_count), lines_per_order)
-    # starts = cumulative start indices per order
-    starts = np.repeat(np.cumsum(lines_per_order) - lines_per_order, lines_per_order)
-    # line numbers within each order: 1..k
+
+    starts = np.repeat(
+        np.cumsum(lines_per_order) - lines_per_order, lines_per_order
+    )
     line_num = (np.arange(expanded_len) - starts + 1).astype(np.int64)
 
     sales_order_num = np.repeat(order_ids_str, lines_per_order)
@@ -108,37 +135,40 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     customer_keys = np.repeat(order_customers, lines_per_order)
     order_dates_expanded = np.repeat(order_dates, lines_per_order)
 
-    # pad if undershoot
-    current_len = len(sales_order_num)
-    if current_len < n:
-        extra = n - current_len
-        extra_suffix = np.char.zfill(rng.integers(0, 999999, extra).astype(str), 6)
-        extra_dates = date_pool[rng.choice(len(date_pool), size=extra, p=date_prob)]
+    # pad if needed
+    curr_len = len(sales_order_num)
+    if curr_len < n:
+        extra = n - curr_len
+        ext_suf = np.char.zfill(rng.integers(0, 999999, extra).astype(str), 6)
+        ext_dates = date_pool[
+            rng.choice(len(date_pool), size=extra, p=date_prob)
+        ]
 
-        extra_dates_str = np.array([str(d.astype("datetime64[D]"))[:10].replace("-", "") for d in extra_dates])
-        extra_ids_str = np.char.add(extra_dates_str, extra_suffix)
-        extra_ids_int = extra_ids_str.astype(np.int64)
+        ext_dt_str = np.array(
+            [str(d.astype("datetime64[D]"))[:10].replace("-", "") for d in ext_dates]
+        )
+        ext_ids_str = np.char.add(ext_dt_str, ext_suf)
+        ext_ids_int = ext_ids_str.astype(np.int64)
 
-        sales_order_num = np.concatenate([sales_order_num, extra_ids_str])
-        sales_order_num_int = np.concatenate([sales_order_num_int, extra_ids_int])
-        # pad line numbers with 1's for new single-line orders
+        sales_order_num = np.concatenate([sales_order_num, ext_ids_str])
+        sales_order_num_int = np.concatenate([sales_order_num_int, ext_ids_int])
         line_num = np.concatenate([line_num, np.ones(extra, dtype=np.int64)])
-        customer_keys = np.concatenate([customer_keys,
-                                        customers[rng.integers(0, len(customers), extra)]])
-        order_dates_expanded = np.concatenate([order_dates_expanded, extra_dates])
+        customer_keys = np.concatenate(
+            [customer_keys, customers[rng.integers(0, len(customers), extra)]]
+        )
+        order_dates_expanded = np.concatenate([order_dates_expanded, ext_dates])
 
-    # final trim to exactly n
+    # trim to exactly n
     sales_order_num = sales_order_num[:n]
     sales_order_num_int = sales_order_num_int[:n]
     line_num = line_num[:n].astype(np.int64)
     customer_keys = customer_keys[:n].astype(np.int64)
     order_dates_expanded = order_dates_expanded[:n]
 
-    # cache date array used later
     od_np = order_dates_expanded.astype("datetime64[D]")
 
     # ---------------------------------------------------------
-    # DELIVERY LOGIC (depends on order_id) - masked assignments
+    # DELIVERY / DUE DATE LOGIC
     # ---------------------------------------------------------
     hash_vals = sales_order_num_int
 
@@ -149,11 +179,9 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     product_seed = (hash_vals + product_keys) % 100
     order_seed = (hash_vals % 100).astype(np.int64)
 
-    # masked assignment instead of np.select
     base_offset = np.zeros(n, dtype=np.int64)
 
-    # cond_a and cond_b set zero (no-op)
-    mask_c = (order_seed >= 60) & (order_seed < 85) & (product_seed >= 60)
+    mask_c = (60 <= order_seed) & (order_seed < 85) & (product_seed >= 60)
     if mask_c.any():
         base_offset[mask_c] = (line_seed[mask_c] % 4) + 1
 
@@ -161,11 +189,12 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     if mask_d.any():
         base_offset[mask_d] = (product_seed[mask_d] % 5) + 2
 
+    # early deliveries
     early_mask = rng.random(n) < 0.10
     early_days = rng.integers(1, 3, n)
+
     delivery_offset = base_offset.copy()
     delivery_offset[early_mask] = -early_days[early_mask]
-
     delivery_date_np = due_date_np + delivery_offset.astype("timedelta64[D]")
 
     delivery_status = np.where(
@@ -174,24 +203,29 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     )
 
     # ---------------------------------------------------------
-    # PROMOTIONS (memory-safe)
+    # PROMOTIONS
     # ---------------------------------------------------------
     promo_keys = np.full(n, no_discount_key, dtype=np.int64)
     promo_pct = np.zeros(n, dtype=np.float64)
 
     if promo_keys_all is not None and promo_keys_all.size > 0:
-        for pk, pct, start, end in zip(promo_keys_all, promo_pct_all, promo_start_all, promo_end_all):
+        for pk, pct, start, end in zip(
+            promo_keys_all, promo_pct_all,
+            promo_start_all, promo_end_all
+        ):
             mask = (od_np >= start) & (od_np <= end)
             if mask.any():
                 promo_keys[mask] = pk
                 promo_pct[mask] = pct
 
     # ---------------------------------------------------------
-    # DISCOUNT LOGIC
+    # DISCOUNTS
     # ---------------------------------------------------------
     promo_disc = unit_price * (promo_pct / 100.0)
 
-    rnd_pct = rng.choice([0, 5, 10, 15, 20], n, p=[0.85, 0.06, 0.04, 0.03, 0.02])
+    rnd_pct = rng.choice(
+        [0, 5, 10, 15, 20], n, p=[0.85, 0.06, 0.04, 0.03, 0.02]
+    )
     rnd_disc = unit_price * (rnd_pct / 100.0)
 
     discount_amt = np.maximum(promo_disc, rnd_disc)
@@ -200,19 +234,25 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     discount_amt = np.minimum(discount_amt, unit_price - 0.01)
 
     # ---------------------------------------------------------
-    # IS ORDER DELAYED
+    # ORDER DELAY FLAG (order-level → line-level)
     # ---------------------------------------------------------
-    is_delayed_line = (delivery_status == "Delayed").astype(np.int64)
+    delayed_line = (delivery_status == "Delayed").astype(np.int64)
 
-    unique_ids, inverse_idx = np.unique(sales_order_num, return_inverse=True)
-    counts = np.bincount(inverse_idx, weights=is_delayed_line, minlength=len(unique_ids))
+    unique_ids, inv_idx = np.unique(
+        sales_order_num, return_inverse=True
+    )
+    counts = np.bincount(
+        inv_idx, weights=delayed_line, minlength=len(unique_ids)
+    )
+
     delayed_any = (counts > 0).astype(np.int8)
-    is_order_delayed = delayed_any[inverse_idx].astype(np.int8)
+    is_order_delayed = delayed_any[inv_idx].astype(np.int8)
 
     # ---------------------------------------------------------
-    # FINAL PRICES (vectorized factor)
+    # FINAL PRICE & COST TRANSFORM
     # ---------------------------------------------------------
     factor = rng.uniform(0.43, 0.61, size=n)
+
     final_unit_price = np.round(unit_price * factor, 2)
     final_unit_cost = np.round(unit_cost * factor, 2)
     final_discount_amt = np.round(discount_amt * factor, 2)
@@ -220,32 +260,34 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     final_net_price = np.clip(final_net_price, 0.01, None)
 
     # ---------------------------------------------------------
-    # BUILD PYARROW OR PANDAS (minimize extra casts)
+    # OUTPUT: PYARROW OR PANDAS
     # ---------------------------------------------------------
     if pa is not None:
-        pa_cols = {
+        cols = {
             "OrderDate": pa.array(od_np),
             "DueDate": pa.array(due_date_np.astype("datetime64[D]")),
             "DeliveryDate": pa.array(delivery_date_np.astype("datetime64[D]")),
-            "StoreKey": pa.array(store_key_arr, type=pa.int64()),
-            "ProductKey": pa.array(product_keys, type=pa.int64()),
-            "PromotionKey": pa.array(promo_keys, type=pa.int64()),
-            "CurrencyKey": pa.array(currency_arr, type=pa.int64()),
-            "CustomerKey": pa.array(customer_keys, type=pa.int64()),
-            "Quantity": pa.array(qty, type=pa.int64()),
-            "NetPrice": pa.array(final_net_price, type=pa.float64()),
-            "UnitCost": pa.array(final_unit_cost, type=pa.float64()),
-            "UnitPrice": pa.array(final_unit_price, type=pa.float64()),
-            "DiscountAmount": pa.array(final_discount_amt, type=pa.float64()),
-            "DeliveryStatus": pa.array(delivery_status.tolist(), type=pa.string()),
-            "IsOrderDelayed": pa.array(is_order_delayed.astype(np.int8), type=pa.int8())
+            "StoreKey": pa.array(store_key_arr, pa.int64()),
+            "ProductKey": pa.array(product_keys, pa.int64()),
+            "PromotionKey": pa.array(promo_keys, pa.int64()),
+            "CurrencyKey": pa.array(currency_arr, pa.int64()),
+            "CustomerKey": pa.array(customer_keys, pa.int64()),
+            "Quantity": pa.array(qty, pa.int64()),
+            "NetPrice": pa.array(final_net_price, pa.float64()),
+            "UnitCost": pa.array(final_unit_cost, pa.float64()),
+            "UnitPrice": pa.array(final_unit_price, pa.float64()),
+            "DiscountAmount": pa.array(final_discount_amt, pa.float64()),
+            "DeliveryStatus": pa.array(delivery_status.tolist(), pa.string()),
+            "IsOrderDelayed": pa.array(is_order_delayed, pa.int8()),
         }
 
         if not skip_cols:
-            pa_cols["SalesOrderNumber"] = pa.array(sales_order_num.tolist(), type=pa.string())
-            pa_cols["SalesOrderLineNumber"] = pa.array(line_num, type=pa.int64())
+            cols["SalesOrderNumber"] = pa.array(
+                sales_order_num.tolist(), pa.string()
+            )
+            cols["SalesOrderLineNumber"] = pa.array(line_num, pa.int64())
 
-        return pa.table(pa_cols)
+        return pa.table(cols)
 
     else:
         df = {
@@ -263,7 +305,7 @@ def _build_chunk_table(n, seed, no_discount_key=1):
             "UnitPrice": final_unit_price,
             "DiscountAmount": final_discount_amt,
             "DeliveryStatus": delivery_status,
-            "IsOrderDelayed": is_order_delayed
+            "IsOrderDelayed": is_order_delayed,
         }
 
         if not skip_cols:

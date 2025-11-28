@@ -1,4 +1,3 @@
-# sales.py
 import os
 import glob
 import numpy as np
@@ -13,6 +12,9 @@ from .sales_writer import merge_parquet_files
 from deltalake import write_deltalake
 
 
+# =====================================================================
+# Helpers
+# =====================================================================
 def ensure_dir(path):
     os.makedirs(path, exist_ok=True)
 
@@ -26,45 +28,65 @@ def load_parquet_df(path, cols=None):
 
 
 def build_weighted_customers(keys, pct, mult, seed=42):
+    """Oversample heavy customers (for heavy_pct / heavy_mult)."""
     rng = np.random.default_rng(seed)
     mask = rng.random(len(keys)) < (pct / 100.0)
     heavy = keys[mask]
     normal = keys[~mask]
+
     parts = []
     if heavy.size:
         parts.append(np.repeat(heavy, mult))
     if normal.size:
         parts.append(normal)
+
     arr = np.concatenate(parts)
     rng.shuffle(arr)
     return arr
 
 
 def build_weighted_date_pool(start, end, seed=42):
+    """
+    Weighted date distribution:
+      - long-term growth
+      - seasonal effects
+      - weekday differences
+      - random spikes
+      - occasional blackout days
+    """
     rng = np.random.default_rng(seed)
     dates = pd.date_range(start, end, freq="D")
     n = len(dates)
+
     years = dates.year.values
     months = dates.month.values
     weekdays = dates.weekday.values
     doy = dates.dayofyear.values
 
+    # Year-over-year growth
     unique_years = np.unique(years)
     idx_year = {y: i for i, y in enumerate(unique_years)}
     growth = 1.08
     yw = np.array([growth ** idx_year[y] for y in years])
 
-    month_weights = {1:0.82,2:0.92,3:1.03,4:0.98,5:1.07,6:1.12,7:1.18,8:1.10,9:0.96,10:1.22,11:1.48,12:1.33}
+    # Month weights
+    month_weights = {
+        1:0.82, 2:0.92, 3:1.03, 4:0.98, 5:1.07, 6:1.12,
+        7:1.18, 8:1.10, 9:0.96, 10:1.22, 11:1.48, 12:1.33
+    }
     mw = np.array([month_weights[m] for m in months])
 
+    # Weekday weights
     weekday_weights = {0:0.86,1:0.91,2:1.00,3:1.12,4:1.19,5:1.08,6:0.78}
     wdw = np.array([weekday_weights[d] for d in weekdays])
 
+    # Seasonal spikes
     spike = np.ones(n)
-    for s,e,f in [(140,170,1.28),(240,260,1.35),(310,350,1.72)]:
+    for s, e, f in [(140,170,1.28),(240,260,1.35),(310,350,1.72)]:
         mask = (doy >= s) & (doy <= e)
         spike[mask] *= f
 
+    # One-time events
     ot = np.ones(n)
     for a,b,f in [("2021-06-01","2021-10-31",0.70),("2023-02-01","2023-08-31",1.40)]:
         A = pd.to_datetime(a); B = pd.to_datetime(b)
@@ -72,8 +94,10 @@ def build_weighted_date_pool(start, end, seed=42):
         ot[mask] *= f
 
     noise = rng.uniform(0.95, 1.05, size=n)
+
     weights = yw * mw * wdw * spike * ot * noise
 
+    # Blackout days
     blackout_mask = rng.random(n) < rng.uniform(0.10, 0.18)
     weights[blackout_mask] = 0
 
@@ -89,6 +113,9 @@ def suggest_chunk_size(total_rows, target_workers=None, preferred_chunks_per_wor
     return max(1_000, int(ceil(total_rows / desired_chunks)))
 
 
+# =====================================================================
+# Main Fact Generation
+# =====================================================================
 def generate_sales_fact(
     parquet_folder,
     out_folder,
@@ -110,42 +137,133 @@ def generate_sales_fact(
     write_delta=False,
     delta_output_folder=None,
     skip_order_cols=False,
-    write_pyarrow=True   # optional safe default
+    write_pyarrow=True
 ):
     """
-    Orchestrator – the public API.
+    Orchestrator for sales generation.
+    Performs:
+      - dimension loading
+      - mapping prep (store→geo→currency)
+      - promotions loading
+      - date weighting
+      - multiprocessing chunk generation
+      - optional merging
     """
+
     ensure_dir(out_folder)
 
     if delta_output_folder is None:
         delta_output_folder = os.path.join(out_folder, "delta")
     ensure_dir(delta_output_folder)
 
-    # --------------------------
-    # Load all inputs
-    # --------------------------
+    # ------------------------------------------------------------
+    # Load Customers
+    # ------------------------------------------------------------
+    customers_raw = load_parquet_column(
+        os.path.join(parquet_folder, "customers.parquet"),
+        "CustomerKey",
+    )
 
-    customers_raw = load_parquet_column(os.path.join(parquet_folder, "customers.parquet"), "CustomerKey")
     customers = build_weighted_customers(customers_raw, heavy_pct, heavy_mult, seed).astype(np.int64)
 
-    prod_df = load_parquet_df(os.path.join(parquet_folder, "products.parquet"), ["ProductKey", "UnitPrice", "UnitCost"])
+    # ------------------------------------------------------------
+    # Load Products
+    # ------------------------------------------------------------
+    prod_df = load_parquet_df(
+        os.path.join(parquet_folder, "products.parquet"),
+        ["ProductKey", "UnitPrice", "UnitCost"],
+    )
     product_np = prod_df.to_numpy()
 
-    store_keys = load_parquet_column(os.path.join(parquet_folder, "stores.parquet"), "StoreKey").astype(np.int64)
+    # ------------------------------------------------------------
+    # Load Stores
+    # ------------------------------------------------------------
+    store_keys = load_parquet_column(
+        os.path.join(parquet_folder, "stores.parquet"),
+        "StoreKey"
+    ).astype(np.int64)
 
-    geo_df = load_parquet_df(os.path.join(parquet_folder, "geography.parquet"), ["GeographyKey", "Country", "ISOCode"])
-    currency_df = pd.read_parquet(os.path.join(parquet_folder, "currency.parquet"))[["CurrencyKey", "ISOCode"]]
+    # ------------------------------------------------------------
+    # Geography → Currency mapping
+    # ------------------------------------------------------------
+    geo_path = os.path.join(parquet_folder, "geography.parquet")
+    info(f"Loading geography from: {geo_path}")
+
+    geo_df = load_parquet_df(
+        geo_path,
+        ["GeographyKey", "Country", "ISOCode"]
+    )
+
+    currency_df = pd.read_parquet(
+        os.path.join(parquet_folder, "currency.parquet")
+    )[["CurrencyKey", "ISOCode"]]
+
+    # Merge to assign CurrencyKey to each GeographyKey
     geo_df = geo_df.merge(currency_df, on="ISOCode", how="left")
 
-    geo_to_currency = dict(zip(geo_df["GeographyKey"], geo_df["CurrencyKey"]))
+    # Fill missing currency with USD or first available
+    if geo_df["CurrencyKey"].isna().any():
+        missing_count = geo_df["CurrencyKey"].isna().sum()
 
-    store_df = load_parquet_df(os.path.join(parquet_folder, "stores.parquet"), ["StoreKey", "GeographyKey"])
-    store_to_geo = dict(zip(store_df["StoreKey"], store_df["GeographyKey"]))
+        if "USD" in currency_df["ISOCode"].values:
+            default_row = currency_df[currency_df["ISOCode"] == "USD"].iloc[0]
+        else:
+            default_row = currency_df.iloc[0]
 
+        default_currency_key = int(default_row["CurrencyKey"])
+        info(f"[sales] {missing_count} geography rows missing CurrencyKey — filling with {default_currency_key}")
+
+        geo_df["CurrencyKey"] = geo_df["CurrencyKey"].fillna(default_currency_key)
+
+    # Build mapping dict
+    geo_to_currency = dict(
+        zip(
+            geo_df["GeographyKey"].astype(np.int64),
+            geo_df["CurrencyKey"].astype(np.int64),
+        )
+    )
+
+    # ------------------------------------------------------------
+    # Store → Geo mapping
+    # ------------------------------------------------------------
+    store_df = load_parquet_df(
+        os.path.join(parquet_folder, "stores.parquet"),
+        ["StoreKey", "GeographyKey"]
+    )
+    store_to_geo = dict(
+        zip(
+            store_df["StoreKey"].astype(np.int64),
+            store_df["GeographyKey"].astype(np.int64),
+        )
+    )
+
+    # Validate missing geos (should be rare)
+    referenced_geos = set(map(int, store_df["GeographyKey"].unique()))
+    known_geos = set(map(int, geo_df["GeographyKey"].unique()))
+
+    missing_geos = sorted(list(referenced_geos - known_geos))
+    if missing_geos:
+        # fallback to default currency key
+        if "USD" in currency_df["ISOCode"].values:
+            default_row = currency_df[currency_df["ISOCode"] == "USD"].iloc[0]
+        else:
+            default_row = currency_df.iloc[0]
+        default_currency_key = int(default_row["CurrencyKey"])
+
+        info(f"[sales] WARNING: {len(missing_geos)} GeographyKey(s) referenced by stores missing from geography.parquet: {missing_geos}")
+        info(f"[sales] Assigning default CurrencyKey={default_currency_key} for these keys.")
+
+        for mg in missing_geos:
+            geo_to_currency[int(mg)] = default_currency_key
+
+    # ------------------------------------------------------------
+    # Promotions
+    # ------------------------------------------------------------
     promo_df = pd.read_parquet(os.path.join(parquet_folder, "promotions.parquet"))
     if not promo_df.empty:
         promo_df["StartDate"] = pd.to_datetime(promo_df["StartDate"]).dt.normalize()
         promo_df["EndDate"] = pd.to_datetime(promo_df["EndDate"]).dt.normalize()
+
         promo_keys_all = promo_df["PromotionKey"].to_numpy(np.int64)
         promo_pct_all = promo_df["DiscountPct"].to_numpy(np.float64)
         promo_start_all = promo_df["StartDate"].to_numpy("datetime64[D]")
@@ -156,9 +274,14 @@ def generate_sales_fact(
         promo_start_all = np.array([], dtype="datetime64[D]")
         promo_end_all = np.array([], dtype="datetime64[D]")
 
+    # ------------------------------------------------------------
+    # Weighted date pool
+    # ------------------------------------------------------------
     date_pool, date_prob = build_weighted_date_pool(start_date, end_date, seed)
 
-    # Determine chunk count
+    # ------------------------------------------------------------
+    # Chunk scheduling
+    # ------------------------------------------------------------
     tasks = []
     remaining = total_rows
     idx = 0
@@ -173,6 +296,7 @@ def generate_sales_fact(
     total_chunks = len(tasks)
     tasks = [(i, b, total_chunks, s) for (i, b, _, s) in tasks]
 
+    # Determine workers
     if workers is None:
         max_cores = max(1, cpu_count() - 1)
         n_workers = min(total_chunks, max_cores)
@@ -181,8 +305,10 @@ def generate_sales_fact(
 
     info(f"Spawning {n_workers} worker processes...")
 
+    # default promo key
     no_discount_key = 1
 
+    # Init args for worker
     init_args = (
         product_np,
         store_keys,
@@ -202,27 +328,42 @@ def generate_sales_fact(
         no_discount_key,
         delta_output_folder,
         write_delta,
-        skip_order_cols
+        skip_order_cols,
     )
 
     created_files = []
 
-    with Pool(processes=n_workers, initializer=_init_worker, initargs=(init_args,)) as pool:
+    # ------------------------------------------------------------
+    # Multiprocessing
+    # ------------------------------------------------------------
+    with Pool(
+        processes=n_workers,
+        initializer=_init_worker,
+        initargs=(init_args,),
+    ) as pool:
+
         for result in pool.imap_unordered(_worker_task, tasks):
+            # Delta batches return tuple: ("delta", idx, table)
             if isinstance(result, tuple) and result[0] == "delta":
                 _, idx_returned, table = result
                 write_deltalake(delta_output_folder, table, mode="append")
-            else:
-                created_files.append(result)
+                continue
+
+            created_files.append(result)
 
     done("All chunks completed.")
 
+    # ------------------------------------------------------------
+    # Merging parquet chunks (only if enabled)
+    # ------------------------------------------------------------
     if file_format == "parquet" and merge_parquet:
-        parquet_chunks = sorted(glob.glob(os.path.join(out_folder, "sales_chunk*.parquet")))
+        parquet_chunks = sorted(
+            glob.glob(os.path.join(out_folder, "sales_chunk*.parquet"))
+        )
         merge_parquet_files(
             parquet_chunks,
             os.path.join(out_folder, merged_file),
-            delete_after=delete_chunks
+            delete_after=delete_chunks,
         )
 
     return created_files

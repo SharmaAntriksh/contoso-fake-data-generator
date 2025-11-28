@@ -6,15 +6,30 @@
     "pct_us": 60,
     "pct_eu": 39,
     "pct_org": 5,
+
     "seed": 42,
     "names_folder": "./data/customer_names",
 
-    "geography_source": {
-        "path": "./data/parquet_dims/geography_source.parquet",
-        "continent": "All",
-        "max_geos": 1000
-    }
+    "geography_path": "./data/parquet_dims/geography.parquet"
+  },
 
+  "geography": {
+    "target_rows": 200,
+
+    "country_weights": {
+      "United States": 0.30,
+      "India": 0.25,
+      "United Kingdom": 0.10,
+      "Germany": 0.10,
+      "France": 0.10,
+      "Australia": 0.08,
+      "Canada": 0.07,
+
+      "China": 0.00,
+      "Japan": 0.00,
+      "South Africa": 0.00,
+      "Rest": 0.00
+    }
   },
 
   "promotions": {
@@ -26,12 +41,12 @@
   },
 
   "stores": {
-    "geography_path": "./data/parquet_dims/geography.parquet",
     "num_stores": 500,
     "opening_start": "1995-01-01",
     "opening_end": "2020-12-31",
     "closing_end": "2025-12-31",
-    "seed": 42
+    "seed": 42,
+    "geography_path": "./data/parquet_dims/geography.parquet"
   },
 
   "dates": {
@@ -41,44 +56,46 @@
   },
 
   "sales": {
-      "parquet_folder": "./data/parquet_dims",
-      "out_folder": "./data/fact_out",
+    "parquet_folder": "./data/parquet_dims",
+    "out_folder": "./data/fact_out",
 
-      "total_rows": 200000000,
-      "chunk_size": 2000000,
+    "total_rows": 2000000,
+    "chunk_size": 2000000,
 
-      "start_date": "2021-01-01",
-      "end_date": "2025-10-31",
+    "start_date": "2021-01-01",
+    "end_date": "2025-10-31",
 
-      "file_format": "parquet",             
-      "write_delta": false,                 
-      "delta_output_folder": "./data/fact_out/delta",     
+    "file_format": "parquet",
+    "write_delta": false,
+    "delta_output_folder": "./data/fact_out/delta",
 
-      "merge_parquet": true,
-      "merged_file": "sales.parquet",
-      "delete_chunks": true,
+    "merge_parquet": true,
+    "merged_file": "sales.parquet",
+    "delete_chunks": true,
 
-      "row_group_size": 1000000,
-      "compression": "snappy",
+    "row_group_size": 1000000,
+    "compression": "snappy",
 
-      "heavy_pct": 5,
-      "heavy_mult": 5,
-      "seed": 42,
+    "heavy_pct": 5,
+    "heavy_mult": 5,
+    "seed": 42,
 
-      "workers": null,
-      "write_pyarrow": true,
-      "tune_chunk": false,
+    "workers": null,
+    "write_pyarrow": true,
+    "tune_chunk": false,
 
-      "skip_order_cols": true
+    "skip_order_cols": true
   },
 
   "exchange_rates": {
-    "currencies": ["USD", "EUR", "INR", "GBP", "AUD", "CAD"],
+    "currencies": [
+      "USD", "EUR", "INR", "GBP",
+      "AUD", "CAD"
+    ],
     "base_currency": "USD",
     "start_date": "2021-01-01",
     "end_date": "2025-10-31",
     "volatility": 0.02,
     "seed": 42
   }
-
 }

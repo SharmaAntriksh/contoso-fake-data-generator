@@ -2,52 +2,73 @@ import json
 import hashlib
 from pathlib import Path
 
-# Folder to store version metadata
-VERSION_DIR = Path("data/versioning")
+# -----------------------------------------------------------
+# Absolute versioning folder under project root
+# -----------------------------------------------------------
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+VERSION_DIR = PROJECT_ROOT / "data" / "versioning"
 VERSION_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def compute_hash(obj):
-    """Compute deterministic hash of a Python object."""
-    data = json.dumps(obj, sort_keys=True).encode("utf-8")
+# -----------------------------------------------------------
+# Helpers
+# -----------------------------------------------------------
+def _compute_hash(obj) -> str:
+    """Compute deterministic hash for config sections."""
+    try:
+        data = json.dumps(obj, sort_keys=True).encode("utf-8")
+    except TypeError:
+        # If object contains non-serializable fields, fallback to string repr
+        data = str(obj).encode("utf-8")
     return hashlib.sha256(data).hexdigest()
 
 
-def version_file_for(name: str):
-    """Return the full path to the version file for this dimension."""
+def _version_file(name: str) -> Path:
+    """Return version file path for the dimension."""
     return VERSION_DIR / f"{name}.version.json"
 
 
 def load_version(name: str):
-    vf = version_file_for(name)
+    """Load the version metadata for a dimension."""
+    vf = _version_file(name)
     if not vf.exists():
         return None
     try:
         return json.loads(vf.read_text())
-    except:
+    except Exception:
         return None
 
 
 def save_version(name: str, cfg_section):
-    vf = version_file_for(name)
-    data = {"config_hash": compute_hash(cfg_section)}
+    """Write config hash into the version file."""
+    vf = _version_file(name)
+    data = {"config_hash": _compute_hash(cfg_section)}
     vf.write_text(json.dumps(data, indent=2))
 
 
-def should_regenerate(name: str, cfg_section, parquet_path):
+def should_regenerate(name: str, cfg_section, parquet_path: Path) -> bool:
     """
-    True if this dimension must be regenerated.
-    Condition:
-    - parquet is missing OR
-    - version file missing OR
-    - config hash changed
-    """
-    current_hash = compute_hash(cfg_section)
-    old = load_version(name)
+    Return True if a dimension must be regenerated.
 
-    if (not parquet_path.exists() or
-        old is None or
-        old.get("config_hash") != current_hash):
+    Conditions:
+    1. Parquet missing
+    2. Version file missing
+    3. Config hash changed
+    """
+    # Condition A: Parquet file missing
+    if not parquet_path.exists():
+        return True
+
+    # Load old version
+    old = load_version(name)
+    if old is None:
+        return True
+
+    # Compute new config hash
+    new_hash = _compute_hash(cfg_section)
+
+    # Condition C: Config changed
+    if old.get("config_hash") != new_hash:
         return True
 
     return False

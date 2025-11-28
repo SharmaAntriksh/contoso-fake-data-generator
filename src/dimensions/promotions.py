@@ -14,15 +14,15 @@ def generate_promotions_catalog(
     Generate holiday, seasonal, clearance, limited-time,
     and a final No-Discount promotion.
 
-    FULLY IDENTICAL logic to original — ONLY cleaned.
+    Logic fully identical to original — only cleaned.
     """
-    np.random.seed(seed)
 
+    np.random.seed(seed)
     years = list(years)
     start_year, end_year = min(years), max(years)
 
     # --------------------------------------------------------
-    # Holiday templates
+    # FIXED PROMOTION TEMPLATES
     # --------------------------------------------------------
     HOLIDAYS = [
         ("Black Friday",   "11-25", "11-30", 3, 10, 0.20, 0.70),
@@ -36,7 +36,7 @@ def generate_promotions_catalog(
         ("Spring Sale",    "02-15", "04-30", 7, 40, 0.05, 0.25),
     ]
 
-    PROMOTION_TYPES = {
+    PROMO_TYPES = {
         "Holiday": "Holiday Discount",
         "Seasonal": "Seasonal Discount",
         "Clearance": "Clearance",
@@ -55,28 +55,27 @@ def generate_promotions_catalog(
     ]
 
     # --------------------------------------------------------
-    # Helpers
+    # DATE HELPERS
     # --------------------------------------------------------
     def mmdd_to_date(mmdd, year):
         m, d = map(int, mmdd.split("-"))
         return datetime(year, m, d)
 
     def clamp(dt):
-        """Ensure start/end stay within the selected year range."""
         if dt.year < start_year:
             return datetime(start_year, dt.month, dt.day)
         if dt.year > end_year:
             return datetime(end_year, dt.month, dt.day)
         return dt
 
-    def overlaps(start, end):
-        """Ensure date is inside the generation window."""
+    def in_range(start, end):
         return not (end.year < start_year or start.year > end_year)
 
     # ========================================================
     # 1. HOLIDAY PROMOTIONS
     # ========================================================
     holiday_promos = []
+
     for y in years:
         for name, s_mmdd, e_mmdd, min_d, max_d, dmin, dmax in HOLIDAYS:
 
@@ -89,16 +88,13 @@ def generate_promotions_catalog(
             if span <= min_d:
                 p_start = s
             else:
-                # Choose a random start inside allowed window
                 p_start = s + timedelta(days=np.random.randint(0, span - min_d + 1))
 
-            # Random length between min_d and max_d
             p_end = p_start + timedelta(days=np.random.randint(min_d, max_d + 1))
 
-            p_start = clamp(p_start)
-            p_end = clamp(p_end)
+            p_start, p_end = clamp(p_start), clamp(p_end)
 
-            if not overlaps(p_start, p_end):
+            if not in_range(p_start, p_end):
                 continue
 
             holiday_promos.append({
@@ -108,14 +104,14 @@ def generate_promotions_catalog(
                 "PromotionName": f"{name} {y} Promotion",
                 "PromotionDescription": f"{name} {y} Holiday Discount",
                 "DiscountPct": round(np.random.uniform(dmin, dmax), 2),
-                "PromotionType": PROMOTION_TYPES["Holiday"],
+                "PromotionType": PROMO_TYPES["Holiday"],
                 "PromotionCategory": np.random.choice(CATEGORIES),
                 "StartDate": pd.Timestamp(p_start),
                 "EndDate": pd.Timestamp(p_end),
             })
 
     # ========================================================
-    # 2. SEASONAL PROMOTIONS (unsorted)
+    # 2. SEASONAL PROMOTIONS
     # ========================================================
     seasonal_promos = []
     for _ in range(num_seasonal):
@@ -126,7 +122,8 @@ def generate_promotions_catalog(
         end = start + timedelta(days=np.random.randint(10, 61))
 
         start, end = clamp(start), clamp(end)
-        if overlaps(start, end):
+
+        if in_range(start, end):
             seasonal_promos.append({
                 "TypeGroup": "Seasonal",
                 "SeasonType": stype,
@@ -134,12 +131,12 @@ def generate_promotions_catalog(
                 "StartDate": pd.Timestamp(start),
                 "EndDate": pd.Timestamp(end),
                 "DiscountPct": round(np.random.uniform(0.05, 0.30), 2),
-                "PromotionType": PROMOTION_TYPES["Seasonal"],
+                "PromotionType": PROMO_TYPES["Seasonal"],
                 "PromotionCategory": np.random.choice(CATEGORIES),
             })
 
     # ========================================================
-    # 3. CLEARANCE PROMOTIONS (unsorted)
+    # 3. CLEARANCE PROMOTIONS
     # ========================================================
     clearance_promos = []
     for _ in range(num_clearance):
@@ -149,7 +146,8 @@ def generate_promotions_catalog(
         end = start + timedelta(days=np.random.randint(3, 25))
 
         start, end = clamp(start), clamp(end)
-        if overlaps(start, end):
+
+        if in_range(start, end):
             clearance_promos.append({
                 "TypeGroup": "Clearance",
                 "SeasonType": "Clearance",
@@ -157,12 +155,12 @@ def generate_promotions_catalog(
                 "StartDate": pd.Timestamp(start),
                 "EndDate": pd.Timestamp(end),
                 "DiscountPct": round(np.random.uniform(0.30, 0.70), 2),
-                "PromotionType": PROMOTION_TYPES["Clearance"],
+                "PromotionType": PROMO_TYPES["Clearance"],
                 "PromotionCategory": np.random.choice(CATEGORIES),
             })
 
     # ========================================================
-    # 4. LIMITED-TIME PROMOTIONS (unsorted)
+    # 4. LIMITED-TIME PROMOTIONS
     # ========================================================
     limited_promos = []
     for _ in range(num_limited):
@@ -172,7 +170,8 @@ def generate_promotions_catalog(
         end = start + timedelta(days=np.random.randint(1, 15))
 
         start, end = clamp(start), clamp(end)
-        if overlaps(start, end):
+
+        if in_range(start, end):
             limited_promos.append({
                 "TypeGroup": "Limited",
                 "SeasonType": "Limited Time",
@@ -180,78 +179,65 @@ def generate_promotions_catalog(
                 "StartDate": pd.Timestamp(start),
                 "EndDate": pd.Timestamp(end),
                 "DiscountPct": round(np.random.uniform(0.05, 0.35), 2),
-                "PromotionType": PROMOTION_TYPES["Limited"],
+                "PromotionType": PROMO_TYPES["Limited"],
                 "PromotionCategory": np.random.choice(CATEGORIES),
             })
 
     # ========================================================
-    # 5. Combine and number Seasonal/Clearance/Limited
+    # 5. Combine All (Holiday kept separate for naming)
     # ========================================================
     df = pd.DataFrame(
         holiday_promos + seasonal_promos + clearance_promos + limited_promos
     )
 
-    numbered_parts = []
+    numbered = []
     non_holiday = df[df["TypeGroup"] != "Holiday"]
 
-    for (y, tgroup, stype), group in non_holiday.groupby(["Year", "TypeGroup", "SeasonType"]):
+    for (y, group_type, stype), group in non_holiday.groupby(["Year", "TypeGroup", "SeasonType"]):
         group = group.sort_values("StartDate").copy()
         group["LocalIndex"] = range(1, len(group) + 1)
-
         group["PromotionName"] = (
-            group["SeasonType"]
-            + " "
-            + group["Year"].astype(str)
-            + " #"
-            + group["LocalIndex"].astype(str)
+            group["SeasonType"] + " " + group["Year"].astype(str) + " #" + group["LocalIndex"].astype(str)
         )
-
         group["PromotionDescription"] = (
             group["SeasonType"] + " for " + group["Year"].astype(str)
         )
+        numbered.append(group)
 
-        numbered_parts.append(group)
-
-    # Holidays (no numbering)
     holiday_df = df[df["TypeGroup"] == "Holiday"].copy()
     holiday_df["LocalIndex"] = None
 
-    final = pd.concat([holiday_df] + numbered_parts, ignore_index=True)
+    final = pd.concat([holiday_df] + numbered, ignore_index=True)
 
     # ========================================================
-    # 6. Add NO-DISCOUNT promotion
+    # 6. Append No-Discount Promotion
     # ========================================================
-    final = pd.concat(
-        [
-            final,
-            pd.DataFrame(
-                [{
-                    "TypeGroup": "NoDiscount",
-                    "SeasonType": "NoDiscount",
-                    "Year": start_year,
-                    "PromotionName": "No Discount",
-                    "PromotionDescription": "No Discount",
-                    "DiscountPct": 0.00,
-                    "PromotionType": PROMOTION_TYPES["NoDiscount"],
-                    "PromotionCategory": "No Discount",
-                    "StartDate": pd.Timestamp(start_year, 1, 1),
-                    "EndDate": pd.Timestamp(end_year, 12, 31),
-                    "LocalIndex": None,
-                }]
-            )
-        ],
-        ignore_index=True
-    )
+    final = pd.concat([
+        final,
+        pd.DataFrame([{
+            "TypeGroup": "NoDiscount",
+            "SeasonType": "NoDiscount",
+            "Year": start_year,
+            "PromotionName": "No Discount",
+            "PromotionDescription": "No Discount",
+            "DiscountPct": 0.00,
+            "PromotionType": PROMO_TYPES["NoDiscount"],
+            "PromotionCategory": "No Discount",
+            "StartDate": pd.Timestamp(start_year, 1, 1),
+            "EndDate": pd.Timestamp(end_year, 12, 31),
+            "LocalIndex": None,
+        }])
+    ], ignore_index=True)
 
     # ========================================================
-    # 7. Final sorting + assign keys
+    # 7. Sort + Assign Keys
     # ========================================================
     final = final.sort_values("StartDate").reset_index(drop=True)
     final["PromotionKey"] = final.index + 1
     final["PromotionLabel"] = final["PromotionKey"]
 
-    # Final column order (unchanged from original)
-    final = final[
+    # Final column order
+    return final[
         [
             "PromotionKey",
             "PromotionLabel",
@@ -261,8 +247,6 @@ def generate_promotions_catalog(
             "PromotionType",
             "PromotionCategory",
             "StartDate",
-            "EndDate",
+            "EndDate"
         ]
     ]
-
-    return final

@@ -10,110 +10,127 @@ from src.dimensions.exchange_rates import generate_exchange_rate_table
 from src.dimensions.geography_builder import build_dim_geography
 
 from src.utils.versioning import should_regenerate, save_version
-from src.utils.logging_utils import stage, info, skip, done, work
+from src.utils.logging_utils import stage, info, skip, done
 
 
 def generate_dimensions(cfg, parquet_dims: Path):
-    cust_cfg = cfg["customers"]
-    promo_cfg = cfg["promotions"]
-    store_cfg = cfg["stores"]
-    date_cfg = cfg["dates"]
-    exch_cfg = cfg["exchange_rates"]
 
-    # Geography
-    geo_out = parquet_dims / "geography.parquet"
-    if should_regenerate("geography", cust_cfg["geography_source"], geo_out):
+    # --------------------------------------------------
+    # Helpers
+    # --------------------------------------------------
+    def out(name):
+        return parquet_dims / f"{name}.parquet"
+
+    def changed(name, section):
+        return should_regenerate(name, section, out(name))
+
+    # --------------------------------------------------
+    # Geography (root dimension)
+    # --------------------------------------------------
+    if changed("geography", cfg["geography"]):
         with stage("Generating Geography"):
-            geo_cfg = cust_cfg["geography_source"]
-            build_dim_geography(
-                source_path=geo_cfg["path"],
-                output_path=geo_out,
-                max_rows=geo_cfg["max_geos"],
-            )
-            save_version("geography", geo_cfg)
+            build_dim_geography(cfg)
+            save_version("geography", cfg["geography"])
     else:
         skip("Geography up-to-date; skipping regeneration")
 
-    # Customers
-    cust_out = parquet_dims / "customers.parquet"
-    if should_regenerate("customers", cust_cfg, cust_out):
+    # --------------------------------------------------
+    # Customers (depends on geography)
+    # --------------------------------------------------
+    customers_need = changed("customers", cfg["customers"]) or changed("geography", cfg["geography"])
+
+    if customers_need:
+        info("Dependency triggered: Customers will regenerate.")
         with stage("Generating Customers"):
-            customers = generate_synthetic_customers(cfg)
-            customers.to_parquet(cust_out, index=False)
-            save_version("customers", cust_cfg)
+            df = generate_synthetic_customers(cfg)
+            df.to_parquet(out("customers"), index=False)
+            save_version("customers", cfg["customers"])
     else:
         skip("Customers up-to-date; skipping regeneration")
 
-    # Promotions
-    promo_out = parquet_dims / "promotions.parquet"
-    if should_regenerate("promotions", promo_cfg, promo_out):
+    # --------------------------------------------------
+    # Promotions (independent)
+    # --------------------------------------------------
+    if changed("promotions", cfg["promotions"]):
         with stage("Generating Promotions"):
-            promotions = generate_promotions_catalog(
-                years=promo_cfg["years"],
-                num_seasonal=promo_cfg["num_seasonal"],
-                num_clearance=promo_cfg["num_clearance"],
-                num_limited=promo_cfg["num_limited"],
-                seed=promo_cfg["seed"],
+            df = generate_promotions_catalog(
+                years=cfg["promotions"]["years"],
+                num_seasonal=cfg["promotions"]["num_seasonal"],
+                num_clearance=cfg["promotions"]["num_clearance"],
+                num_limited=cfg["promotions"]["num_limited"],
+                seed=cfg["promotions"]["seed"],
             )
-            promotions.to_parquet(promo_out, index=False)
-            save_version("promotions", promo_cfg)
+            df.to_parquet(out("promotions"), index=False)
+            save_version("promotions", cfg["promotions"])
     else:
         skip("Promotions up-to-date; skipping regeneration")
 
-    # Stores
-    store_out = parquet_dims / "stores.parquet"
-    if should_regenerate("stores", store_cfg, store_out):
+    # --------------------------------------------------
+    # Stores (depends on geography)
+    # --------------------------------------------------
+    stores_need = changed("stores", cfg["stores"]) or changed("geography", cfg["geography"])
+
+    if stores_need:
+        info("Dependency triggered: Stores will regenerate.")
         with stage("Generating Stores"):
-            stores = generate_store_table(
-                geography_parquet_path=store_cfg["geography_path"],
-                num_stores=store_cfg["num_stores"],
-                opening_start=store_cfg["opening_start"],
-                opening_end=store_cfg["opening_end"],
-                closing_end=store_cfg["closing_end"],
-                seed=store_cfg["seed"],
+            df = generate_store_table(
+                geography_parquet_path=cfg["stores"]["geography_path"],
+                num_stores=cfg["stores"]["num_stores"],
+                opening_start=cfg["stores"]["opening_start"],
+                opening_end=cfg["stores"]["opening_end"],
+                closing_end=cfg["stores"]["closing_end"],
+                seed=cfg["stores"]["seed"],
             )
-            stores.to_parquet(store_out, index=False)
-            save_version("stores", store_cfg)
+            df.to_parquet(out("stores"), index=False)
+            save_version("stores", cfg["stores"])
     else:
         skip("Stores up-to-date; skipping regeneration")
 
-    # Dates
-    dates_out = parquet_dims / "dates.parquet"
-    if should_regenerate("dates", date_cfg, dates_out):
+    # --------------------------------------------------
+    # Dates (independent)
+    # --------------------------------------------------
+    if changed("dates", cfg["dates"]):
         with stage("Generating Dates"):
-            dates = generate_date_table(
-                date_cfg["start_date"],
-                date_cfg["end_date"],
-                date_cfg["fiscal_month_offset"],
+            df = generate_date_table(
+                cfg["dates"]["start_date"],
+                cfg["dates"]["end_date"],
+                cfg["dates"]["fiscal_month_offset"]
             )
-            dates.to_parquet(dates_out, index=False)
-            save_version("dates", date_cfg)
+            df.to_parquet(out("dates"), index=False)
+            save_version("dates", cfg["dates"])
     else:
         skip("Dates up-to-date; skipping regeneration")
 
-    # Currency
-    curr_out = parquet_dims / "currency.parquet"
-    if should_regenerate("currency", exch_cfg, curr_out):
+    # --------------------------------------------------
+    # Currency (independent)
+    # --------------------------------------------------
+    if changed("currency", cfg["exchange_rates"]):
         with stage("Generating Currency Dimension"):
-            currency_df = generate_currency_dimension(exch_cfg["currencies"])
-            currency_df.to_parquet(curr_out, index=False)
-            save_version("currency", exch_cfg)
+            df = generate_currency_dimension(cfg["exchange_rates"]["currencies"])
+            df.to_parquet(out("currency"), index=False)
+            save_version("currency", cfg["exchange_rates"])
     else:
         skip("Currency dimension up-to-date; skipping regeneration")
 
-    # Exchange Rates
-    fx_out = parquet_dims / "exchange_rates.parquet"
-    if should_regenerate("exchange_rates", exch_cfg, fx_out):
+    # --------------------------------------------------
+    # Exchange rates (depends on currency)
+    # --------------------------------------------------
+    fx_need = changed("exchange_rates", cfg["exchange_rates"]) or changed("currency", cfg["exchange_rates"])
+
+    if fx_need:
+        info("Dependency triggered: Exchange Rates will regenerate.")
         with stage("Generating Exchange Rates"):
-            fx_df = generate_exchange_rate_table(
-                exch_cfg["start_date"],
-                exch_cfg["end_date"],
-                exch_cfg["currencies"],
-                exch_cfg["base_currency"],
-                exch_cfg["volatility"],
-                exch_cfg["seed"],
+            df = generate_exchange_rate_table(
+                cfg["exchange_rates"]["start_date"],
+                cfg["exchange_rates"]["end_date"],
+                cfg["exchange_rates"]["currencies"],
+                cfg["exchange_rates"]["base_currency"],
+                cfg["exchange_rates"]["volatility"],
+                cfg["exchange_rates"]["seed"],
             )
-            fx_df.to_parquet(fx_out, index=False)
-            save_version("exchange_rates", exch_cfg)
+            df.to_parquet(out("exchange_rates"), index=False)
+            save_version("exchange_rates", cfg["exchange_rates"])
     else:
         skip("Exchange Rates up-to-date; skipping regeneration")
+
+    done("All dimensions generated.")
