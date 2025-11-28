@@ -5,14 +5,7 @@ from pathlib import Path
 from src.utils.output_utils import create_final_output_folder, clear_folder
 from src.sql.generate_bulk_insert_sql import generate_bulk_insert_script
 from src.sql.generate_create_table_scripts import generate_all_create_tables
-
-
-@contextmanager
-def stage(label: str):
-    print(f"\n=== {label}... ===")
-    t = time.time()
-    yield
-    print(f"\n✔ {label} completed in {time.time() - t:.2f} seconds")
+from src.utils.logging_utils import stage, info, skip, done, work
 
 
 def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
@@ -49,7 +42,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
             facts_csv = sorted(p for p in facts_folder.glob("*.csv"))
 
             if not dims_csv and not facts_csv:
-                print("⚠ No CSV files found — skipping BULK INSERT scripts.")
+                skip("⚠ No CSV files found — skipping BULK INSERT scripts.")
             else:
                 # Bulk insert for dimensions (infer table names automatically)
                 generate_bulk_insert_script(
@@ -65,7 +58,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
                     output_sql_file=str(final_folder / "bulk_insert_facts.sql"),
                 )
 
-                print("\n✔ Bulk Insert scripts generated successfully.")
+                done("\n✔ Bulk Insert scripts generated successfully.")
 
         # ---------------------------------------------------------
         # CREATE TABLE SCRIPTS — ALWAYS

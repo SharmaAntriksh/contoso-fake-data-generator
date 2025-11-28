@@ -4,14 +4,7 @@ from contextlib import contextmanager
 
 from src.facts.sales import generate_sales_fact
 from src.utils.output_utils import clear_folder
-
-
-@contextmanager
-def stage(label: str):
-    print(f"\n=== {label}... ===")
-    t = time.time()
-    yield
-    print(f"\n✔ {label} completed in {time.time() - t:.2f} seconds")
+from src.utils.logging_utils import stage, info, skip, done, work
 
 
 def run_sales_pipeline(sales_cfg, fact_out: Path):

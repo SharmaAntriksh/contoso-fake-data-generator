@@ -16,6 +16,7 @@ import csv
 from datetime import datetime
 from multiprocessing import Pool, cpu_count
 from math import ceil
+from src.utils.logging_utils import info, work, skip, done, stage
 
 # Try to import pyarrow; if unavailable we'll fall back to pandas-parquet writer
 try:
@@ -542,7 +543,7 @@ def _worker_task(args):
                 table_for_arrow = pa.Table.from_pandas(table_or_df, preserve_index=False)
             write_deltalake(delta_output_folder, table_for_arrow, mode="append")
 
-    print(f"\n✓ Finished chunk {idx} -> {out}", flush=True)
+    work(f"Finished chunk {idx} -> {out}")
     return out
 
 # -------------------------
@@ -552,7 +553,7 @@ def _worker_task(args):
 def merge_parquet_files(out_folder, merged_file_name, delete_chunks=True):
     files = sorted(glob.glob(os.path.join(out_folder, "sales_chunk*.parquet")))
     if not files:
-        print("No parquet chunk files to merge.")
+        skip("No parquet chunk files to merge.")
         return None
     merged_path = os.path.join(out_folder, merged_file_name)
     try:
@@ -680,7 +681,7 @@ def generate_sales_fact(
     # optional tuning
     if tune_chunk:
         suggested = suggest_chunk_size(total_rows, target_workers=None)
-        print(f"Suggested chunk_size for your machine: {suggested:,} rows (use this to better utilize cores)")
+        info(f"Suggested chunk_size for your machine: {suggested:,} rows (use this to better utilize cores)")
 
     # build tasks
     tasks = []
@@ -700,8 +701,7 @@ def generate_sales_fact(
     else:
         n_workers = max(1, int(workers))
 
-    print(f"=== Generating Sales... ===\n\nSpawning {n_workers} worker processes...")
-
+    info(f"Spawning {n_workers} worker processes...")
     # local helper value required by workers
     no_discount_key = 1
 
@@ -745,7 +745,7 @@ def generate_sales_fact(
                 # Normal CSV or Parquet output path
                 created.append(item)
 
-    print("\nAll chunks completed.")
+    done("All chunks completed.")
 
     if file_format == "parquet" and merge_parquet:
         merge_parquet_files(out_folder, merged_file, delete_chunks=delete_chunks)

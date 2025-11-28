@@ -1,6 +1,5 @@
 import time
 from pathlib import Path
-from contextlib import contextmanager
 
 from src.dimensions.customers import generate_synthetic_customers
 from src.dimensions.promotions import generate_promotions_catalog
@@ -11,14 +10,7 @@ from src.dimensions.exchange_rates import generate_exchange_rate_table
 from src.dimensions.geography_builder import build_dim_geography
 
 from src.utils.versioning import should_regenerate, save_version
-
-
-@contextmanager
-def stage(label: str):
-    print(f"\n=== {label}... ===")
-    t = time.time()
-    yield
-    print(f"\n✔ {label} completed in {time.time() - t:.2f} seconds")
+from src.utils.logging_utils import stage, info, skip, done, work
 
 
 def generate_dimensions(cfg, parquet_dims: Path):
@@ -40,7 +32,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
             )
             save_version("geography", geo_cfg)
     else:
-        print("✔ Geography up-to-date; skipping regeneration")
+        skip("Geography up-to-date; skipping regeneration")
 
     # Customers
     cust_out = parquet_dims / "customers.parquet"
@@ -50,7 +42,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
             customers.to_parquet(cust_out, index=False)
             save_version("customers", cust_cfg)
     else:
-        print("✔ Customers up-to-date; skipping regeneration")
+        skip("Customers up-to-date; skipping regeneration")
 
     # Promotions
     promo_out = parquet_dims / "promotions.parquet"
@@ -66,7 +58,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
             promotions.to_parquet(promo_out, index=False)
             save_version("promotions", promo_cfg)
     else:
-        print("✔ Promotions up-to-date; skipping regeneration")
+        skip("Promotions up-to-date; skipping regeneration")
 
     # Stores
     store_out = parquet_dims / "stores.parquet"
@@ -83,7 +75,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
             stores.to_parquet(store_out, index=False)
             save_version("stores", store_cfg)
     else:
-        print("✔ Stores up-to-date; skipping regeneration")
+        skip("Stores up-to-date; skipping regeneration")
 
     # Dates
     dates_out = parquet_dims / "dates.parquet"
@@ -97,7 +89,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
             dates.to_parquet(dates_out, index=False)
             save_version("dates", date_cfg)
     else:
-        print("✔ Dates up-to-date; skipping regeneration")
+        skip("Dates up-to-date; skipping regeneration")
 
     # Currency
     curr_out = parquet_dims / "currency.parquet"
@@ -107,7 +99,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
             currency_df.to_parquet(curr_out, index=False)
             save_version("currency", exch_cfg)
     else:
-        print("✔ Currency dimension up-to-date; skipping regeneration")
+        skip("Currency dimension up-to-date; skipping regeneration")
 
     # Exchange Rates
     fx_out = parquet_dims / "exchange_rates.parquet"
@@ -124,4 +116,4 @@ def generate_dimensions(cfg, parquet_dims: Path):
             fx_df.to_parquet(fx_out, index=False)
             save_version("exchange_rates", exch_cfg)
     else:
-        print("✔ Exchange Rates up-to-date; skipping regeneration")
+        skip("Exchange Rates up-to-date; skipping regeneration")
