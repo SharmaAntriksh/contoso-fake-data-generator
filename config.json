@@ -1,6 +1,6 @@
 {
   "customers": {
-    "total_customers": 1649237,
+    "total_customers": 149237,
 
     "pct_india": 1,
     "pct_us": 60,
@@ -44,13 +44,13 @@
       "parquet_folder": "./data/parquet_dims",
       "out_folder": "./data/fact_out",
 
-      "total_rows": 10000000,
-      "chunk_size": 1000000,
+      "total_rows": 100000000,
+      "chunk_size": 2000000,
 
       "start_date": "2021-01-01",
       "end_date": "2025-10-31",
 
-      "file_format": "csv",             
+      "file_format": "parquet",             
       "write_delta": false,                 
       "delta_output_folder": "./data/fact_out/delta",     
 
@@ -58,7 +58,7 @@
       "merged_file": "sales.parquet",
       "delete_chunks": true,
 
-      "row_group_size": 1000000,
+      "row_group_size": 2000000,
       "compression": "snappy",
 
       "heavy_pct": 5,
