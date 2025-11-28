@@ -1,6 +1,8 @@
 import os
 from datetime import datetime
 from pathlib import Path
+from src.utils.logging_utils import info, work, skip
+
 
 def generate_bulk_insert_script(
     csv_folder,
@@ -12,36 +14,25 @@ def generate_bulk_insert_script(
 ):
     """
     Generate a BULK INSERT SQL script for all CSV files in a folder.
-
-    - If table_name is provided (e.g., "Sales"), all files load into that table.
-    - If table_name is None (dimensions folder), infer table name from file name.
-    - Uses SQL Server's CSV mode (no XML format file required).
     """
 
     csv_folder = Path(csv_folder)
 
-    # ----------------------------------------------------------
-    # Prevent stray "bulk_insert.sql" in project root
-    # If user did NOT pass a custom filename, redirect output inside csv_folder
-    # ----------------------------------------------------------
+    # Prevent stray script in project root
     if output_sql_file == "bulk_insert.sql":
         output_sql_file = str(csv_folder / "_ignored_bulk_insert.sql")
 
-    # ----------------------------------------------------------
     # Collect CSV Files
-    # ----------------------------------------------------------
     csv_files = sorted(
         f for f in os.listdir(csv_folder)
         if f.lower().endswith(".csv")
     )
 
     if not csv_files:
-        print(f"No CSV files found in {csv_folder}. Skipping BULK INSERT script.")
+        skip(f"No CSV files found in {csv_folder}. Skipping BULK INSERT script.")
         return None
 
-    # ----------------------------------------------------------
-    # Header for Script
-    # ----------------------------------------------------------
+    # Script header
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines = [
         "-- Auto-generated BULK INSERT script",
@@ -49,17 +40,10 @@ def generate_bulk_insert_script(
         ""
     ]
 
-    # ----------------------------------------------------------
-    # Build BULK INSERT Statements
-    # ----------------------------------------------------------
+    # Build BULK INSERT statements
     for csv_file in csv_files:
 
-        # If table_name is supplied (fact), use it. Otherwise infer from filename.
-        if table_name:
-            inferred_table = table_name
-        else:
-            inferred_table = os.path.splitext(csv_file)[0].capitalize()
-
+        inferred_table = table_name or os.path.splitext(csv_file)[0].capitalize()
         csv_full_path = os.path.abspath(os.path.join(csv_folder, csv_file))
 
         stmt = f"""
@@ -76,11 +60,9 @@ WITH (
 """
         lines.append(stmt.strip())
 
-    # ----------------------------------------------------------
-    # Write final script
-    # ----------------------------------------------------------
+    # Write final SQL script
     with open(output_sql_file, "w", encoding="utf-8") as out:
         out.write("\n\n".join(lines))
 
-    print(f"CSV Bulk Insert SQL created at: {output_sql_file}")
+    work(f"Wrote BULK INSERT script → {Path(output_sql_file).name}")
     return output_sql_file

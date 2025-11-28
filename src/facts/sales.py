@@ -485,7 +485,7 @@ def _build_chunk_table(n, seed, no_discount_key=1):
 # -------------------------
 
 def _worker_task(args):
-    idx, batch, seed = args
+    idx, batch, total_chunks, seed = args
     out_folder = _G_out_folder
     file_format = _G_file_format
     row_group_size = _G_row_group_size
@@ -543,7 +543,9 @@ def _worker_task(args):
                 table_for_arrow = pa.Table.from_pandas(table_or_df, preserve_index=False)
             write_deltalake(delta_output_folder, table_for_arrow, mode="append")
 
-    work(f"Finished chunk {idx} -> {out}")
+    pct = int((idx + 1) / total_chunks * 100)
+    work(f"Chunk {idx+1}/{total_chunks} ({pct}%) -> {out}")
+    
     return out
 
 # -------------------------
@@ -690,9 +692,15 @@ def generate_sales_fact(
     rng_master = np.random.default_rng(seed + 1)
     while remaining > 0:
         batch = min(chunk_size, remaining)
-        tasks.append((idx, batch, int(rng_master.integers(1, 1 << 30))))
+        tasks.append((idx, batch, None, int(rng_master.integers(1, 1 << 30))))
         remaining -= batch
         idx += 1
+
+    # Now fill in total_chunks
+    total_chunks = len(tasks)
+
+    # Inject total_chunks into each task tuple
+    tasks = [(i, b, total_chunks, s) for (i, b, _, s) in tasks]
 
     if workers is None:
         # default: don't spawn more workers than tasks; leave one CPU for OS
@@ -748,6 +756,12 @@ def generate_sales_fact(
     done("All chunks completed.")
 
     if file_format == "parquet" and merge_parquet:
+        info("Merging chunks into final sales file...")
+        merge_start = datetime.now()
+
         merge_parquet_files(out_folder, merged_file, delete_chunks=delete_chunks)
 
+        merge_duration = (datetime.now() - merge_start).total_seconds()
+        done(f"Merging chunks ({merge_duration:.2f}s)")
+        
     return created

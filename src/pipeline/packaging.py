@@ -42,23 +42,20 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
             facts_csv = sorted(p for p in facts_folder.glob("*.csv"))
 
             if not dims_csv and not facts_csv:
-                skip("⚠ No CSV files found — skipping BULK INSERT scripts.")
+                skip("No CSV files found — skipping BULK INSERT scripts.")
             else:
-                # Bulk insert for dimensions (infer table names automatically)
                 generate_bulk_insert_script(
                     csv_folder=str(dims_folder),
                     table_name=None,
                     output_sql_file=str(final_folder / "bulk_insert_dims.sql"),
                 )
-
-                # Bulk insert for facts (explicit Sales table name)
                 generate_bulk_insert_script(
                     csv_folder=str(facts_folder),
                     table_name="Sales",
                     output_sql_file=str(final_folder / "bulk_insert_facts.sql"),
                 )
+                # No done() here — stage() handles DONE output automatically.
 
-                done("\n✔ Bulk Insert scripts generated successfully.")
 
         # ---------------------------------------------------------
         # CREATE TABLE SCRIPTS — ALWAYS

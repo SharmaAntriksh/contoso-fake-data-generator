@@ -77,3 +77,19 @@ def stage(label: str):
 
     duration = (datetime.now() - start).total_seconds()
     done(f"{label} ({duration:.2f}s)")
+
+
+def human_duration(seconds: float):
+    seconds = int(seconds)
+    mins, secs = divmod(seconds, 60)
+    hours, mins = divmod(mins, 60)
+
+    parts = []
+    if hours > 0:
+        parts.append(f"{hours} hour" + ("s" if hours != 1 else ""))
+    if mins > 0:
+        parts.append(f"{mins} minute" + ("s" if mins != 1 else ""))
+    if secs > 0 or len(parts) == 0:
+        parts.append(f"{secs} second" + ("s" if secs != 1 else ""))
+
+    return ", ".join(parts)
