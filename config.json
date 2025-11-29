@@ -1,6 +1,6 @@
 {
   "customers": {
-    "total_customers": 149237,
+    "total_customers": 49237,
 
     "pct_india": 1,
     "pct_us": 60,
@@ -22,8 +22,8 @@
       "United Kingdom": 0.10,
       "Germany": 0.10,
       "France": 0.10,
-      "Australia": 0.08,
-      "Canada": 0.07,
+      "Australia": 0.07,
+      "Canada": 0.08,
 
       "China": 0.00,
       "Japan": 0.00,
@@ -59,7 +59,7 @@
     "parquet_folder": "./data/parquet_dims",
     "out_folder": "./data/fact_out",
 
-    "total_rows": 2000000,
+    "total_rows": 20000,
     "chunk_size": 2000000,
 
     "start_date": "2021-01-01",

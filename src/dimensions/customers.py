@@ -192,7 +192,7 @@ def generate_synthetic_customers(config, save_customer_csv=False, out_cust="Synt
     YearlyIncome = np.where(IsOrg, None, rng.integers(20000, 200000, size=N))
 
     TotalChildren = pd.Series(
-        np.where(IsOrg, pd.NNA, rng.integers(0, 5, size=N)),
+        np.where(IsOrg, pd.NA, rng.integers(0, 5, size=N)),
         dtype="Int64",
     )
 
