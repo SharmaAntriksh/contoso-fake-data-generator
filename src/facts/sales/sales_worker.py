@@ -20,14 +20,17 @@ _G_no_discount_key = None
 _G_delta_output_folder = None
 _G_write_delta = None
 
+# NEW — worker-level partitioning
+_G_partition_enabled = False
+_G_partition_cols = None
+
 
 # =====================================================================
 # WORKER INITIALIZER
 # =====================================================================
 def _init_worker(init_args):
     """
-    Each worker receives all read-only global arrays/dicts used by sales_logic.
-    This ensures perfect equivalence with the old monolithic design.
+    Workers receive all data needed by sales_logic and write configuration.
     """
 
     (
@@ -42,6 +45,7 @@ def _init_worker(init_args):
         geo_to_currency,
         date_pool,
         date_prob,
+
         out_folder,
         file_format,
         row_group_size,
@@ -50,6 +54,10 @@ def _init_worker(init_args):
         delta_output_folder,
         write_delta,
         skip_flag,
+
+        # NEW — partitioning config injected by pipeline/sales.py
+        partition_enabled,
+        partition_cols,
     ) = init_args
 
     # -----------------------------
@@ -63,6 +71,10 @@ def _init_worker(init_args):
         _G_no_discount_key=no_discount_key,
         _G_delta_output_folder=delta_output_folder,
         _G_write_delta=write_delta,
+
+        # NEW
+        _G_partition_enabled=partition_enabled,
+        _G_partition_cols=partition_cols,
     ))
 
     # -----------------------------
@@ -84,10 +96,9 @@ def _init_worker(init_args):
     })
 
     # -----------------------------
-    # Array-optimize store→geo, geo→currency if possible
+    # Array-optimize store→geo, geo→currency
     # -----------------------------
     try:
-        # store → geo
         if store_to_geo:
             max_store = max(store_to_geo.keys())
             arr = np.full(max_store + 1, -1, dtype=np.int64)
@@ -97,7 +108,6 @@ def _init_worker(init_args):
         else:
             bind_globals({"_G_store_to_geo_arr": None})
 
-        # geo → currency
         if geo_to_currency:
             max_geo = max(geo_to_currency.keys())
             arr = np.full(max_geo + 1, -1, dtype=np.int64)
@@ -108,53 +118,70 @@ def _init_worker(init_args):
             bind_globals({"_G_geo_to_currency_arr": None})
 
     except Exception:
-        # Fall back to dictionary-only path
         bind_globals({"_G_store_to_geo_arr": None})
         bind_globals({"_G_geo_to_currency_arr": None})
 
 
 # =====================================================================
-# WORKER TASK
+# WORKER TASK  (FULLY UPDATED)
 # =====================================================================
 def _worker_task(args):
     """
     args = (idx, batch_size, total_chunks, seed)
-    Builds chunk, writes to the output folder, returns path or delta tuple.
+    Builds chunk, writes output (CSV or Parquet), returns path.
+    NOTE: For deltaparquet we WRITE PARQUET CHUNKS (no delta writes in workers).
     """
     idx, batch, total_chunks, seed = args
 
     # -----------------------------
-    # Build the chunk
+    # Build chunk
     # -----------------------------
     table_or_df = _build_chunk_table(batch, seed, no_discount_key=_G_no_discount_key)
 
-    # Normalize to Arrow Table
+    # Normalize to Arrow table
     if isinstance(table_or_df, pa.Table):
         table = table_or_df
     else:
         table = pa.Table.from_pandas(table_or_df, preserve_index=False)
 
-    # Row count (safe for Parquet and CSV)
-    nrows = table.num_rows
-
     # -----------------------------
-    # Write output
+    # Write output by format
     # -----------------------------
     if _G_file_format == "csv":
         out = os.path.join(_G_out_folder, f"sales_chunk{idx:04d}.csv")
         df = table.to_pandas()
         df.to_csv(out, index=False, quoting=csv.QUOTE_ALL)
 
-    elif _G_file_format == "deltaparquet":
-        # Workers don’t write delta — return to parent.
-        return ("delta", idx, table)
-
     else:
-        # Parquet via Arrow (best performance)
-        import pyarrow.parquet as pq
-
+        # For both 'parquet' and 'deltaparquet' workers write parquet chunks.
+        # If partitioning is enabled for deltaparquet, inject Year/Month columns first.
         out = os.path.join(_G_out_folder, f"sales_chunk{idx:04d}.parquet")
 
+        if _G_file_format == "deltaparquet" and _G_partition_enabled and _G_partition_cols:
+            # we need partition columns present in the chunk before main append.
+            df = table.to_pandas()
+
+            # ensure OrderDate is datetime
+            if "OrderDate" in df.columns:
+                df["OrderDate"] = pd.to_datetime(df["OrderDate"], errors="coerce")
+
+            if "Year" in _G_partition_cols and "Year" not in df.columns:
+                if "OrderDate" in df.columns:
+                    df["Year"] = df["OrderDate"].dt.year
+                else:
+                    df["Year"] = None
+
+            if "Month" in _G_partition_cols and "Month" not in df.columns:
+                if "OrderDate" in df.columns:
+                    df["Month"] = df["OrderDate"].dt.month
+                else:
+                    df["Month"] = None
+
+            # convert back to arrow (preserve types)
+            table = pa.Table.from_pandas(df, preserve_index=False)
+
+        # write parquet via pyarrow
+        import pyarrow.parquet as pq
         pq.write_table(
             table,
             out,
@@ -162,21 +189,12 @@ def _worker_task(args):
             compression=_G_compression,
         )
 
-        # Optional delta append
-        if _G_write_delta:
-            write_deltalake(_G_delta_output_folder, table, mode="append")
+        # optional: if _G_write_delta is set and you want immediate single-file delta behavior,
+        # we do NOT call write_deltalake here — main process will handle delta merge.
 
     # -----------------------------
-    # Progress indicator (safe)
+    # Progress indicator
     # -----------------------------
-    pct = int((idx + 1) / total_chunks * 100)
-
-    work(
-        chunk=idx + 1,
-        total=total_chunks,
-        pct=pct,
-        rows=nrows,
-        outfile=out,
-    )
+    work(chunk=idx + 1, total=total_chunks, outfile=out)
 
     return out

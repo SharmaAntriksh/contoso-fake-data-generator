@@ -10,6 +10,7 @@ from src.utils.logging_utils import info, work, skip, done, stage
 from .sales_worker import _init_worker, _worker_task
 from .sales_writer import merge_parquet_files
 from deltalake import write_deltalake
+import pyarrow as pa
 
 
 # =====================================================================
@@ -137,7 +138,10 @@ def generate_sales_fact(
     write_delta=False,
     delta_output_folder=None,
     skip_order_cols=False,
-    write_pyarrow=True
+    write_pyarrow=True,
+    partition_enabled=False,
+    partition_cols=None
+
 ):
     """
     Orchestrator for sales generation.
@@ -329,6 +333,8 @@ def generate_sales_fact(
         delta_output_folder,
         write_delta,
         skip_order_cols,
+        partition_enabled,
+        partition_cols,
     )
 
     created_files = []
@@ -343,15 +349,73 @@ def generate_sales_fact(
     ) as pool:
 
         for result in pool.imap_unordered(_worker_task, tasks):
-            # Delta batches return tuple: ("delta", idx, table)
-            if isinstance(result, tuple) and result[0] == "delta":
-                _, idx_returned, table = result
-                write_deltalake(delta_output_folder, table, mode="append")
-                continue
-
             created_files.append(result)
 
     done("All chunks completed.")
+
+    # ------------------------------------------------------------
+    # Delta merge (FAST: streaming + vectorized partition filtering)
+    # ------------------------------------------------------------
+    if file_format == "deltaparquet":
+        info("Building partition buckets (vectorized streaming)...")
+
+        import pyarrow.parquet as pq
+        import pyarrow.compute as pc
+        from deltalake import write_deltalake
+
+        parquet_chunks = sorted(
+            [f for f in created_files if str(f).lower().endswith(".parquet")]
+        )
+
+        if not parquet_chunks:
+            raise RuntimeError("No parquet chunk files found for Delta merge.")
+
+        buckets = {}     # (Year, Month) -> list of Arrow tables
+        first_write = True
+
+        for pf in parquet_chunks:
+            tbl = pq.read_table(pf)
+
+            # Unique partition keys in this chunk (vectorized)
+            years = tbl.column("Year").unique().to_pylist()
+            months = tbl.column("Month").unique().to_pylist()
+
+            # Partition combinations
+            unique_parts = set(zip(years, months))
+
+            for (y, m) in unique_parts:
+                filter_expr = (
+                    (pc.field("Year") == pa.scalar(y)) &
+                    (pc.field("Month") == pa.scalar(m))
+                )
+                part_tbl = tbl.filter(filter_expr)
+
+                buckets.setdefault((y, m), []).append(part_tbl)
+
+        info("Writing Delta table (one file per partition)...")
+
+        os.makedirs(delta_output_folder, exist_ok=True)
+
+        for (y, m), tables in buckets.items():
+            # Vectorized concat for the small subset of tables
+            final_tbl = tables[0] if len(tables) == 1 else pa.concat_tables(tables)
+
+            write_deltalake(
+                delta_output_folder,
+                final_tbl,
+                mode="overwrite" if first_write else "append",
+                partition_by=["Year", "Month"],
+            )
+            first_write = False
+
+        # cleanup
+        if delete_chunks:
+            for pf in parquet_chunks:
+                try: os.remove(pf)
+                except: pass
+
+        info("Delta merge completed (FAST).")
+
 
     # ------------------------------------------------------------
     # Merging parquet chunks (only if enabled)

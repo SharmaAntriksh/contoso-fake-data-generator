@@ -3,7 +3,7 @@
     "seed": 42,
 
     "dates": {
-      "start": "2020-01-02",
+      "start": "2020-01-01",
       "end": "2025-12-31"
     },
 
@@ -16,9 +16,9 @@
     "out_folder": "./data/fact_out",
 
     "total_rows": 500000000,
-    "chunk_size": 5000000,
+    "chunk_size": 2000000,
 
-    "file_format": "parquet",
+    "file_format": "deltaparquet",
     "write_delta": false,
     "delta_output_folder": "./data/fact_out/delta",
 
@@ -26,7 +26,7 @@
     "merged_file": "sales.parquet",
     "delete_chunks": true,
 
-    "row_group_size": 2500000,
+    "row_group_size": 2000000,
     "compression": "snappy",
 
     "heavy_pct": 5,
@@ -43,6 +43,10 @@
         "end": "2025-10-31"
       },
       "seed": null
+    },
+    "partitioning": {
+      "enabled": true,
+      "columns": ["Year", "Month"]
     }
   },
 
