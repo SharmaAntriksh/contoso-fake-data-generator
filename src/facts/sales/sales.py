@@ -7,7 +7,7 @@ from multiprocessing import Pool, cpu_count
 from math import ceil
 
 from src.utils.logging_utils import info, work, skip, done, stage
-from .sales_worker import _init_worker, _worker_task
+from .sales_worker import init_sales_worker, _worker_task
 from .sales_writer import merge_parquet_files
 from deltalake import write_deltalake
 import pyarrow as pa
@@ -344,12 +344,17 @@ def generate_sales_fact(
     # ------------------------------------------------------------
     with Pool(
         processes=n_workers,
-        initializer=_init_worker,
-        initargs=(init_args,),
+        initializer=init_sales_worker,
+        initargs=init_args,
     ) as pool:
 
         for result in pool.imap_unordered(_worker_task, tasks):
-            created_files.append(result)
+            # worker may return either a dict {"path": "..."} or a plain path string
+            if isinstance(result, dict):
+                created_files.append(result.get("path"))
+            else:
+                created_files.append(result)
+
 
     done("All chunks completed.")
 
@@ -377,20 +382,16 @@ def generate_sales_fact(
             tbl = pq.read_table(pf)
 
             # Unique partition keys in this chunk (vectorized)
-            years = tbl.column("Year").unique().to_pylist()
-            months = tbl.column("Month").unique().to_pylist()
-
-            # Partition combinations
-            unique_parts = set(zip(years, months))
-
-            for (y, m) in unique_parts:
+            # Unique Year–Month pairs in this chunk (correct)
+            ym_df = tbl.select(["Year", "Month"]).to_pandas().drop_duplicates()
+            for y, m in zip(ym_df["Year"].astype(int), ym_df["Month"].astype(int)):
                 filter_expr = (
-                    (pc.field("Year") == pa.scalar(y)) &
-                    (pc.field("Month") == pa.scalar(m))
+                    (pc.field("Year") == pa.scalar(int(y))) &
+                    (pc.field("Month") == pa.scalar(int(m)))
                 )
                 part_tbl = tbl.filter(filter_expr)
+                buckets.setdefault((int(y), int(m)), []).append(part_tbl)
 
-                buckets.setdefault((y, m), []).append(part_tbl)
 
         info("Writing Delta table (one file per partition)...")
 

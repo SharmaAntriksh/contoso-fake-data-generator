@@ -58,7 +58,9 @@ def count_rows_parquet(path: Path) -> int:
 # ============================================================
 def create_final_output_folder(parquet_dims: str | Path,
                                fact_folder: str | Path,
-                               file_format: str) -> Path:
+                               file_format: str,
+                               sales_rows_expected: int = None) -> Path:
+
 
     parquet_dims = Path(parquet_dims)
     fact_folder = Path(fact_folder)
@@ -68,25 +70,13 @@ def create_final_output_folder(parquet_dims: str | Path,
     # --------------------------------------------------------
     customer_rows = count_rows_parquet(parquet_dims / "customers.parquet")
 
+# --------------------------------------------------------
+    # Sales row count (use config.json instead of counting)
     # --------------------------------------------------------
-    # Count Sales
-    # --------------------------------------------------------
-    if file_format == "csv":
-        fact_files = list(fact_folder.glob("*.csv"))
-        sales_rows = sum(count_rows_csv(f) for f in fact_files)
+    if sales_rows_expected is None:
+        raise RuntimeError("sales_rows_expected must be provided to create_final_output_folder.")
 
-    elif file_format == "deltaparquet":
-        delta_dir = fact_folder / "delta"
-        part_files = list(delta_dir.glob("*.parquet"))
-        sales_rows = sum(count_rows_parquet(f) for f in part_files)
-
-    else:  # parquet
-        merged_path = fact_folder / "sales.parquet"
-        if merged_path.exists():
-            sales_rows = count_rows_parquet(merged_path)
-        else:
-            fact_files = list(fact_folder.glob("*.parquet"))
-            sales_rows = sum(count_rows_parquet(f) for f in fact_files)
+    sales_rows = sales_rows_expected
 
     # --------------------------------------------------------
     # Name Output Folder

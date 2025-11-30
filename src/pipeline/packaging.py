@@ -25,6 +25,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
             parquet_dims=parquet_dims,
             fact_folder=fact_out,
             file_format=sales_cfg["file_format"],
+            sales_rows_expected=sales_cfg["total_rows"]   # <-- FIX: read from config.json
         )
 
         dims_out = final_folder / "dims"
