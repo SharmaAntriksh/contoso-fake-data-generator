@@ -1,0 +1,39 @@
+import os
+import pyarrow.parquet as pq
+import pandas as pd
+
+from src.utils.logging_utils import info
+from src.utils.versioning import load_version
+
+
+def load_dimension(name, parquet_dims_path, expected_config):
+    """
+    Loads a dimension parquet file and returns:
+        (pandas_dataframe, changed_flag)
+
+    changed_flag = True only when version file is missing or outdated.
+    DataFrame is ALWAYS returned if parquet exists.
+    """
+
+    path = os.path.join(str(parquet_dims_path), f"{name}.parquet")
+
+    # Missing parquet -> must regenerate AND nothing to return
+    if not os.path.exists(path):
+        info(f"{name.title()} missing — will regenerate.")
+        return None, True
+
+    # Load the dimension as Pandas DataFrame (NOT PyArrow Table)
+    df = pq.read_table(path).to_pandas()
+
+    # Version check
+    prev_version = load_version(name)
+
+    # If no version file exists → changed
+    if prev_version is None:
+        changed_flag = True
+    else:
+        # version changed if config dict differs
+        changed_flag = prev_version != expected_config
+
+
+    return df, changed_flag

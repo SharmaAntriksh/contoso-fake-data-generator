@@ -1,169 +1,172 @@
-from pathlib import Path
+import os
 import shutil
-import pandas as pd
-from datetime import datetime
-import csv
+import time
+from pathlib import Path
 import pyarrow.parquet as pq
-
-
-# ============================================================
-# Optional Delta Support
-# ============================================================
-try:
-    from deltalake import write_deltalake
-    DELTA_AVAILABLE = True
-except Exception:
-    DELTA_AVAILABLE = False
-
-
-# ============================================================
-# Folder Utilities
-# ============================================================
-def clear_folder(path: str | Path) -> None:
-    """Ensure folder exists and is empty."""
-    p = Path(path)
-    p.mkdir(parents=True, exist_ok=True)
-    for child in p.iterdir():
-        if child.is_file() or child.is_symlink():
-            child.unlink()
-        else:
-            shutil.rmtree(child)
+from src.utils.logging_utils import stage, done, info
 
 
 # ============================================================
 # Helpers
 # ============================================================
+
 def format_number_short(n: int) -> str:
-    """Short numeric formatter: 12000 → 12K."""
     if n >= 1_000_000_000: return f"{n // 1_000_000_000}B"
     if n >= 1_000_000:     return f"{n // 1_000_000}M"
     if n >= 1_000:         return f"{n // 1_000}K"
     return str(n)
 
 
-def count_rows_csv(path: Path) -> int:
-    with path.open("r", encoding="utf-8", newline="") as f:
-        next(f, None)
-        return sum(1 for _ in f)
+def create_final_output_folder(
+    final_folder_root: Path,
+    parquet_dims: Path,
+    fact_folder: Path,
+    sales_cfg: dict,
+    file_format: str,
+    sales_rows_expected: int,
+    cfg: dict
+):
+    """
+    Packs cleaned dimension + fact data according to config rules.
+    """
+    stage("Creating Final Output Folder")
+
+    timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+    # FIXED — correct folder naming
+    customer_total = cfg["customers"]["total_customers"]
+    sales_total = sales_cfg["total_rows"]
+
+    dataset_name = (
+        f"Customers {format_number_short(customer_total)} "
+        f"Sales {format_number_short(sales_total)} "
+        f"{timestamp}"
+    )
 
 
-def count_rows_parquet(path: Path) -> int:
-    """Count rows without loading the data (zero memory)."""
-    pf = pq.ParquetFile(path)
-    return pf.metadata.num_rows
-
-
-# ============================================================
-# Final Output Folder Builder
-# ============================================================
-def create_final_output_folder(parquet_dims: str | Path,
-                               fact_folder: str | Path,
-                               file_format: str,
-                               sales_rows_expected: int = None) -> Path:
-
-
-    parquet_dims = Path(parquet_dims)
-    fact_folder = Path(fact_folder)
-
-    # --------------------------------------------------------
-    # Count Customers
-    # --------------------------------------------------------
-    customer_rows = count_rows_parquet(parquet_dims / "customers.parquet")
-
-# --------------------------------------------------------
-    # Sales row count (use config.json instead of counting)
-    # --------------------------------------------------------
-    if sales_rows_expected is None:
-        raise RuntimeError("sales_rows_expected must be provided to create_final_output_folder.")
-
-    sales_rows = sales_rows_expected
-
-    # --------------------------------------------------------
-    # Name Output Folder
-    # --------------------------------------------------------
-    cust_short = format_number_short(customer_rows)
-    sales_short = format_number_short(sales_rows)
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
-    final_root = Path("./generated_datasets")
-    final_root.mkdir(exist_ok=True)
-
-    final_folder = final_root / f"Customer_{cust_short}__Sales_{sales_short}__{timestamp}"
-    final_folder.mkdir(exist_ok=True)
-
-    dims_out = final_folder / "dims"
-    dims_out.mkdir(exist_ok=True)
-
+    final_folder = final_folder_root / dataset_name
+    dims_out = final_folder / "dimensions"
     facts_out = final_folder / "facts"
-    facts_out.mkdir(exist_ok=True)
 
     # --------------------------------------------------------
-    # DIMENSIONS
+    # CLEAN THIS DATASET FOLDER ONLY
     # --------------------------------------------------------
-    dim_files = [
-        f for f in parquet_dims.glob("*.parquet")
-        if f.stem.lower() not in {"geography_source", "worldcities"}
-    ]
+    if final_folder.exists():
+        shutil.rmtree(final_folder, ignore_errors=True)
+    final_folder.mkdir(parents=True, exist_ok=True)
 
-    if file_format == "csv":
-        # Convert dims to CSV
-        for f in dim_files:
+    dims_out.mkdir(parents=True, exist_ok=True)
+    facts_out.mkdir(parents=True, exist_ok=True)
+
+    # --------------------------------------------------------
+    # DIMENSIONS HANDLING
+    # --------------------------------------------------------
+    ff = file_format.lower()
+
+    if ff == "parquet":
+        # Copy dimension parquet files
+        for f in parquet_dims.glob("*.parquet"):
+            shutil.copy2(f, dims_out / f.name)
+
+    elif ff == "csv":
+        # Convert parquet → CSV
+        import pandas as pd
+        for f in parquet_dims.glob("*.parquet"):
             df = pd.read_parquet(f)
-            df.to_csv(
-                dims_out / (f.stem + ".csv"),
-                index=False,
-                encoding="utf-8",
-                quoting=csv.QUOTE_ALL
+            csv_path = dims_out / (f.stem + ".csv")
+            df.to_csv(csv_path, index=False)
+
+    elif ff == "deltaparquet":
+        # Convert parquet → Delta table
+        from deltalake import write_deltalake
+        for f in parquet_dims.glob("*.parquet"):
+            dim_name = f.stem
+            delta_out = dims_out / dim_name
+            delta_out.mkdir(parents=True, exist_ok=True)
+            table = pq.read_table(f)
+
+            write_deltalake(
+                str(delta_out),
+                table,
+                mode="overwrite"
             )
     else:
-        # Parquet or DeltaParquet
-        for f in dim_files:
-            if file_format == "deltaparquet":
-                if not DELTA_AVAILABLE:
-                    raise RuntimeError("DeltaParquet mode selected but 'deltalake' is not installed.")
-                table = pq.read_table(f)
-                write_deltalake(str(dims_out / f.stem), table, mode="overwrite")
-            else:
-                shutil.copy2(f, dims_out / f.name)
+        raise ValueError(f"Unknown file_format: {file_format}")
 
     # --------------------------------------------------------
-    # FACT FILES
+    # FACT HANDLING
     # --------------------------------------------------------
+    sales_target = facts_out / "sales"
 
-    # Delta-only mode
-    if file_format == "deltaparquet":
+    # Always clean sales output first
+    if sales_target.exists():
+        shutil.rmtree(sales_target, ignore_errors=True)
 
-        # 1) Try modern sales.py output: fact_folder/sales/delta
-        delta_src = fact_folder / "sales" / "delta"
+    # ---------------------------
+    # DELTA PARQUET MODE
+    # ---------------------------
+    if ff == "deltaparquet":
 
-        # 2) Fallback: fact_folder/delta
-        if not delta_src.exists():
-            delta_src = fact_folder / "delta"
+        # Locate Delta output folder
+        delta_src = None
 
-        # 3) Final fallback: any delta subfolder under fact_folder
-        if not delta_src.exists():
-            for child in fact_folder.iterdir():
-                if child.is_dir() and (child / "_delta_log").exists():
-                    delta_src = child
-                    break
+        # config override
+        cfg_delta = sales_cfg.get("delta_output_folder")
+        if cfg_delta:
+            d = Path(cfg_delta).expanduser().resolve()
+            if d.exists():
+                delta_src = d
 
-        # 4) If still not found → real error
-        if not delta_src.exists():
-            raise RuntimeError("Delta output folder missing for deltaparquet mode.")
+        # fallback to internal
+        if delta_src is None:
+            fb = fact_folder / "delta"
+            if fb.exists():
+                delta_src = fb
 
-        shutil.copytree(delta_src, facts_out / "sales", dirs_exist_ok=True)
+        if delta_src is None:
+            raise RuntimeError("DeltaParquet output folder not found!")
+
+        # Copy REAL delta table only
+        shutil.copytree(
+            delta_src,
+            sales_target,
+            ignore=shutil.ignore_patterns("_tmp_parts*", "tmp*", "*_tmp*")
+        )
+
+        done("Creating Final Output Folder")
         return final_folder
 
+    # --------------------------------------------------------
+    # PARQUET MODE
+    # --------------------------------------------------------
+    if ff == "parquet":
+        partitioned_sales = fact_folder / "sales"
 
-    # CSV + PARQUET modes
-    for f in fact_folder.glob("*.*"):
-        if f.suffix.lower() in {".csv", ".parquet"}:
-            shutil.copy2(f, facts_out / f.name)
+        if partitioned_sales.exists():
+            shutil.copytree(
+                partitioned_sales,
+                sales_target,
+                ignore=shutil.ignore_patterns("_tmp_parts*", "tmp*", "*_tmp*")
+            )
 
-    # If also delta was written alongside parquet
-    delta_src = fact_folder / "delta"
-    if file_format == "parquet" and delta_src.exists():
-        if any(f.name.startswith("part-") for f in delta_src.glob("*.parquet")):
-            shutil.copytree(delta_src, facts_out / "sales", dirs_exist_ok=True)
+        done("Creating Final Output Folder")
+        return final_folder
 
-    return final_folder
+    # --------------------------------------------------------
+    # CSV MODE
+    # --------------------------------------------------------
+    if ff == "csv":
+        partitioned_sales = fact_folder / "sales"
+        import pandas as pd
+
+        for file in partitioned_sales.rglob("*.parquet"):
+            rel = file.relative_to(partitioned_sales)
+            out_file = sales_target / rel.with_suffix(".csv")
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+
+            df = pd.read_parquet(file)
+            df.to_csv(out_file, index=False)
+
+        done("Creating Final Output Folder")
+        return final_folder
+
+    raise ValueError(f"Unknown file_format: {file_format}")

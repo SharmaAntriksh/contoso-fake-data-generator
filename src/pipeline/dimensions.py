@@ -1,7 +1,7 @@
 import time
 from pathlib import Path
 from datetime import datetime
-
+import os
 from src.dimensions.customers import generate_synthetic_customers
 from src.dimensions.promotions import generate_promotions_catalog
 from src.dimensions.stores import generate_store_table
@@ -83,23 +83,67 @@ def generate_dimensions(cfg, parquet_dims: Path):
     if changed("promotions", cfg["promotions"]):
         with stage("Generating Promotions"):
 
-            # precise expansion of date_ranges → year windows
-            ranges = cfg["promotions"]["date_ranges"]
-            year_windows = expand_date_ranges(ranges)
-            years = sorted(year_windows.keys())
+            promo_cfg = cfg["promotions"]
+
+            # 1) Use explicit promo date_ranges if provided
+            ranges = promo_cfg.get("date_ranges", []) or []
+
+            if ranges:
+                # expand date ranges → precise year windows (existing helper)
+                year_windows = expand_date_ranges(ranges)
+                years = sorted(year_windows.keys())
+
+            else:
+                # Use global defaults.dates
+                global_dates = cfg["defaults"]["dates"]
+                start = global_dates["start"]
+                end = global_dates["end"]
+
+                # Apply override if present
+                override_dates = promo_cfg.get("override", {}).get("dates", {})
+                start = override_dates.get("start", start)
+                end = override_dates.get("end", end)
+
+                # Convert to year-based windows
+                start_year = int(start[:4])
+                end_year = int(end[:4])
+
+                year_windows = {}
+                for y in range(start_year, end_year + 1):
+                    y_start = f"{y}-01-01"
+                    y_end = f"{y}-12-31"
+
+                    # Clamp window to actual global override start/end
+                    if y == start_year:
+                        y_start = start
+                    if y == end_year:
+                        y_end = end
+
+                    # convert YYYY-MM-DD → datetime
+                    ws = datetime.fromisoformat(y_start)
+                    we = datetime.fromisoformat(y_end)
+
+                    year_windows[y] = (ws, we)
+
+                years = list(year_windows.keys())
+
 
             df = generate_promotions_catalog(
                 years=years,
-                year_windows=year_windows,   # <-- new precise boundaries
-                num_seasonal=cfg["promotions"]["num_seasonal"],
-                num_clearance=cfg["promotions"]["num_clearance"],
-                num_limited=cfg["promotions"]["num_limited"],
-                seed=cfg["promotions"]["seed"],
+                year_windows=year_windows,
+                num_seasonal=promo_cfg["num_seasonal"],
+                num_clearance=promo_cfg["num_clearance"],
+                num_limited=promo_cfg["num_limited"],
+                seed=promo_cfg.get("seed", cfg.get("defaults", {}).get("seed")),
             )
+
             df.to_parquet(out("promotions"), index=False)
-            save_version("promotions", cfg["promotions"])
+            save_version("promotions", promo_cfg)
+
     else:
         skip("Promotions up-to-date; skipping regeneration")
+
+
 
     # --------------------------------------------------
     # Stores (depends on geography)
@@ -109,33 +153,41 @@ def generate_dimensions(cfg, parquet_dims: Path):
     if store_need:
         info("Dependency triggered: Stores will regenerate.")
         with stage("Generating Stores"):
+
+            base_seed = cfg["defaults"]["seed"]
+            seed = cfg["stores"].get("override", {}).get("seed", cfg["stores"].get("seed", base_seed))
+
             df = generate_store_table(
-                geography_parquet_path=cfg["stores"]["paths"]["geography"],
+                geography_parquet_path=os.path.join(parquet_dims, "geography.parquet"),
                 num_stores=cfg["stores"]["num_stores"],
                 opening_start=cfg["stores"]["opening"]["start"],
                 opening_end=cfg["stores"]["opening"]["end"],
                 closing_end=cfg["stores"]["closing_end"],
-                seed=cfg["stores"]["seed"],
+                seed=seed,
             )
             df.to_parquet(out("stores"), index=False)
             save_version("stores", cfg["stores"])
-    else:
-        skip("Stores up-to-date; skipping regeneration")
+
 
     # --------------------------------------------------
     # Dates
     # --------------------------------------------------
     if changed("dates", cfg["dates"]):
         with stage("Generating Dates"):
-            df = generate_date_table(
-                cfg["dates"]["dates"]["start"],
-                cfg["dates"]["dates"]["end"],
-                cfg["dates"]["fiscal_month_offset"]
-            )
+            base_start = cfg["defaults"]["dates"]["start"]
+            base_end   = cfg["defaults"]["dates"]["end"]
+
+            # Apply overrides
+            ovr = cfg["dates"].get("override", {}).get("dates", {})
+            start = ovr.get("start", base_start)
+            end   = ovr.get("end",   base_end)
+
+            df = generate_date_table(start, end, cfg["dates"]["fiscal_month_offset"])
             df.to_parquet(out("dates"), index=False)
             save_version("dates", cfg["dates"])
     else:
         skip("Dates up-to-date; skipping regeneration")
+
 
     # --------------------------------------------------
     # Currency
@@ -156,17 +208,26 @@ def generate_dimensions(cfg, parquet_dims: Path):
     if fx_need:
         info("Dependency triggered: Exchange Rates will regenerate.")
         with stage("Generating Exchange Rates"):
+            base_start = cfg["defaults"]["dates"]["start"]
+            base_end   = cfg["defaults"]["dates"]["end"]
+
+            # Apply override
+            ovr = cfg["exchange_rates"].get("override", {}).get("dates", {})
+            start = ovr.get("start", base_start)
+            end   = ovr.get("end",   base_end)
+
             df = generate_exchange_rate_table(
-                cfg["exchange_rates"]["dates"]["start"],
-                cfg["exchange_rates"]["dates"]["end"],
+                start,
+                end,
                 cfg["exchange_rates"]["currencies"],
                 cfg["exchange_rates"]["base_currency"],
                 cfg["exchange_rates"]["volatility"],
-                cfg["exchange_rates"]["seed"],
+                cfg["exchange_rates"].get("seed", cfg["defaults"]["seed"]),
             )
             df.to_parquet(out("exchange_rates"), index=False)
             save_version("exchange_rates", cfg["exchange_rates"])
     else:
         skip("Exchange Rates up-to-date; skipping regeneration")
+
 
     done("All dimensions generated.")

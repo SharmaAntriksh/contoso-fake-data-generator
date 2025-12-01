@@ -24,6 +24,7 @@ _G_geo_to_currency_arr = None
 _G_store_to_geo = None
 _G_geo_to_currency = None
 
+_fmt = lambda dt: np.char.replace(np.datetime_as_string(dt, unit='D'), "-", "")
 
 def bind_globals(gdict):
     """Multiprocessing worker initializer inserts globals."""
@@ -57,14 +58,20 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     store_to_geo = _G_store_to_geo
     geo_to_currency = _G_geo_to_currency
 
+    # cached lengths to avoid repeated len(...) calls
+    _len_date_pool = len(date_pool)
+    _len_customers = len(customers)
+    _len_store_keys = len(store_keys)
+    _len_products = len(product_np)
+
     # ---------------------------------------------------------
     # PRODUCTS
     # ---------------------------------------------------------
-    prod_idx = rng.integers(0, len(product_np), size=n)
+    prod_idx = rng.integers(0, _len_products, size=n)
     prods = product_np[prod_idx]  # shape (n, cols)
 
     # ensure numeric dtypes once (copy=False avoids copying when unnecessary)
-    product_keys = prods[:, 0].astype(np.int64, copy=False)
+    product_keys = prods[:, 0]
     unit_price    = prods[:, 1].astype(np.float64, copy=False)
     unit_cost     = prods[:, 2].astype(np.float64, copy=False)
 
@@ -92,7 +99,7 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     # ---------------------------------------------------------
     # QUANTITY
     # ---------------------------------------------------------
-    qty = np.clip(rng.poisson(3, n) + 1, 1, 10).astype(np.int64)
+    qty = np.clip(rng.poisson(3, n) + 1, 1, 10)
 
     # ---------------------------------------------------------
     # ORDER GROUPING (vectorized generation of order-level data)
@@ -156,35 +163,28 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     curr_len = len(sales_order_num_int)
     if curr_len < n:
         extra = n - curr_len
-        # Only create string extras if we need string column
+
+        # choose extra dates and suffixes
+        ext_dates = date_pool[rng.choice(_len_date_pool, size=extra, p=date_prob)]
+        ext_suffix_int = rng.integers(0, 999999, extra, dtype=np.int64)
+
+        # numeric ext ids (fast, avoids string->int conversions)
+        ext_dt_str = _fmt(ext_dates)
+        ext_dt_int = ext_dt_str.astype(np.int64, copy=False)
+        ext_ids_int = (ext_dt_int * 1_000_000) + ext_suffix_int
+
         if not skip_cols:
-            ext_suf = np.char.zfill(rng.integers(0, 999999, extra).astype(str), 6)
-            ext_dates = date_pool[rng.choice(len(date_pool), size=extra, p=date_prob)]
-
-            ext_dt_str = np.datetime_as_string(ext_dates, unit='D')
-            ext_dt_str = np.char.replace(ext_dt_str, "-", "")
+            # build string ext ids only when needed (creates suffix strings from the same ints)
+            ext_suf = np.char.zfill(ext_suffix_int.astype(str), 6)
             ext_ids_str = np.char.add(ext_dt_str, ext_suf)
-            ext_ids_int = ext_ids_str.astype(np.int64)
-
-            # append to string array
             sales_order_num = np.concatenate([sales_order_num, ext_ids_str]) if sales_order_num is not None else ext_ids_str
-            sales_order_num_int = np.concatenate([sales_order_num_int, ext_ids_int])
-        else:
-            # skip creating string ids; only extend integer ids & other arrays
-            ext_dates = date_pool[rng.choice(len(date_pool), size=extra, p=date_prob)]
-            # build integer ext ids directly: YYYYMMDD*1e6 + suffix
-            ext_suffix_int = rng.integers(0, 999999, extra).astype(np.int64)
-            ext_dt_str = np.datetime_as_string(ext_dates, unit='D')
-            ext_dt_str = np.char.replace(ext_dt_str, "-", "")
-            ext_dt_int = ext_dt_str.astype(np.int64)
-            ext_ids_int = (ext_dt_int * 1_000_000) + ext_suffix_int
 
-            sales_order_num_int = np.concatenate([sales_order_num_int, ext_ids_int])
-
-        # extend line_num, customer_keys, order_dates_expanded
+        # append integer ids and extend other arrays
+        sales_order_num_int = np.concatenate([sales_order_num_int, ext_ids_int])
         line_num = np.concatenate([line_num, np.ones(extra, dtype=np.int64)])
-        customer_keys = np.concatenate([customer_keys, customers[rng.integers(0, len(customers), extra)]])
+        customer_keys = np.concatenate([customer_keys, customers[rng.integers(0, _len_customers, extra)]])
         order_dates_expanded = np.concatenate([order_dates_expanded, ext_dates])
+
 
 
     # trim/truncate exactly to n rows
@@ -273,7 +273,7 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     promo_disc = unit_price * (promo_pct / 100.0)
 
     rnd_pct = rng.choice([0, 5, 10, 15, 20], n, p=[0.85, 0.06, 0.04, 0.03, 0.02])
-    rnd_disc = unit_price * (rnd_pct / 100.0)
+    rnd_disc = unit_price * (rnd_pct * 0.01)
 
     discount_amt = np.maximum(promo_disc, rnd_disc)
     discount_amt *= rng.choice([0.90, 0.95, 1.00, 1.05, 1.10], n)
@@ -305,9 +305,11 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     # ---------------------------------------------------------
     if PA_AVAILABLE:
         # --- Precast dates once (your current block recasts twice) ---
-        od_d  = od_np.astype("datetime64[D]")
-        due_d = due_date_np.astype("datetime64[D]")
-        del_d = delivery_date_np.astype("datetime64[D]")
+        # these are already datetime64[D] views in our pipeline; avoid re-casting (copy-free)
+        od_d = od_np
+        due_d = due_date_np
+        del_d = delivery_date_np
+
 
         # --- Build Arrow arrays (no schema changes, same columns) ---
         cols = {
@@ -331,6 +333,16 @@ def _build_chunk_table(n, seed, no_discount_key=1):
             "DeliveryStatus": pa.array(delivery_status, pa.string()),
             "IsOrderDelayed": pa.array(is_order_delayed, pa.int8()),
         }
+        
+        # --- Partition columns (Arrow) ---
+        # compute year/month from od_d (datetime64[D]) in a vectorized, copy-free way
+        # convert to months-since-1970 then derive year and month
+        months_since_1970 = od_d.astype("datetime64[M]").astype("int64")
+        year_arr = (months_since_1970 // 12 + 1970).astype("int16")
+        month_arr = (months_since_1970 % 12 + 1).astype("int8")
+
+        cols["Year"] = pa.array(year_arr, pa.int16())
+        cols["Month"] = pa.array(month_arr, pa.int8())
 
         # --- KEEP EXACT SAME LOGIC FOR OPTIONAL COLUMNS ---
         if not skip_cols:
@@ -358,6 +370,14 @@ def _build_chunk_table(n, seed, no_discount_key=1):
             "DeliveryStatus": delivery_status,
             "IsOrderDelayed": is_order_delayed,
         }
+
+        # --- Partition columns (NumPy/Pandas) ---
+        months_since_1970 = od_np.astype("datetime64[M]").astype("int64")
+        year_np = (months_since_1970 // 12 + 1970).astype("int16")
+        month_np = (months_since_1970 % 12 + 1).astype("int8")
+
+        df["Year"] = year_np
+        df["Month"] = month_np
 
         if not skip_cols:
             df["SalesOrderNumber"] = sales_order_num.astype(str)

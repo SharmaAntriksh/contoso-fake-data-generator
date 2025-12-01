@@ -46,7 +46,7 @@ def generate_synthetic_customers(config, save_customer_csv=False, out_cust="Synt
     pct_eu = cust_cfg["pct_eu"]
     pct_org = cust_cfg["pct_org"]
 
-    seed = cust_cfg["seed"]
+    seed = cust_cfg.get("seed", config["defaults"]["seed"])
     names_folder = cust_cfg["names_folder"]
 
     rng = np.random.default_rng(seed)

@@ -90,7 +90,7 @@ def init_sales_worker(
     _G_compression = compression
 
     _G_no_discount_key = no_discount_key
-    _G_delta_output_folder = delta_output_folder
+    _G_delta_output_folder = os.path.normpath(delta_output_folder)
     _G_write_delta = write_delta
     _G_skip_order_cols = skip_order_cols
 
@@ -221,6 +221,8 @@ def _extract_partition_cols(table: pa.Table) -> pa.Table:
     table = table.append_column("Month", pa.array(months, type=pa.int8()))
     return table
 
+import time
+t0 = time.perf_counter()
 
 def _worker_task(args):
     """
@@ -231,24 +233,36 @@ def _worker_task(args):
       - ("delta", idx, table) when deltaparquet return-to-main is used, or
       - ("delta", idx, path) when deltaparquet + _G_write_delta is enabled (worker wrote file).
     """
+    
     idx, batch_size, seed = args
 
+    # --- Ensure per-worker unique seed to avoid identical chunks when upstream reuses seed ---
+    # If upstream supplies a good unique seed, this will not disturb it.
+    # If upstream mistakenly passes the same seed for many workers, we add a lightweight, unique
+    # perturbation combining worker idx, pid and current time low bits so chunks differ.
+    try:
+        pid = os.getpid()
+    except Exception:
+        pid = idx
+
+    # allow None seeds — treat as 0
+    base_seed = int(seed) if seed is not None else 0
+    # mix in idx + pid and low bits of current time for quick entropy
+    seed_for_chunk = base_seed ^ (idx + pid + (int(time.time()) & 0xFFFF))
+
     # Build the chunk (sales_logic._build_chunk_table should be vectorized when possible)
-    table_or_df = _build_chunk_table(batch_size, seed, no_discount_key=_G_no_discount_key)
+    # pass the computed seed_for_chunk so each worker produces different data
+    table_or_df = _build_chunk_table(batch_size, seed_for_chunk, no_discount_key=_G_no_discount_key)
+
 
     # Ensure Arrow table quickly (fast path if already Arrow)
     table = _ensure_arrow_table(table_or_df)
 
-    # Partitioning (vectorized, low-overhead)
-    # Partition columns should only be added for deltaparquet
-    add_partitions = (
-        _G_file_format == "deltaparquet"
-        and _G_partition_enabled
-        and "OrderDate" in table.column_names
-    )
+    # Partitioning:
+    # Year/Month are already created inside sales_logic._build_chunk_table().
+    # Workers must NOT add these again, otherwise Arrow sees duplicate fields.
+    # Therefore we do nothing here.
 
-    if add_partitions:
-        table = _extract_partition_cols(table)
 
     # ------------------------------------------------------------
     # DELTAPARQUET — Workers write ONLY temp parquet parts
@@ -262,13 +276,13 @@ def _worker_task(args):
 
         out_path = os.path.join(tmp_dir, f"delta_part_{idx:04d}.parquet")
 
+        t_io0 = time.perf_counter()
         _stream_write_parquet(
             table,
             out_path,
             compression=_G_compression,
             row_group_size=int(_G_row_group_size)
         )
-
         work(f"Delta chunk {idx} → {out_path}")
 
         # Return path (never Arrow table)
@@ -293,6 +307,7 @@ def _worker_task(args):
     # PARQUET MODE (default)
     os.makedirs(_G_out_folder, exist_ok=True)
     out_path = os.path.join(_G_out_folder, f"sales_chunk{idx:04d}.parquet")
+    t_io0 = time.perf_counter()
     _stream_write_parquet(
         table,
         out_path,

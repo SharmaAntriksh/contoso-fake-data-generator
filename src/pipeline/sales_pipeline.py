@@ -1,105 +1,124 @@
+from __future__ import annotations
+
+import time
 from pathlib import Path
-from src.utils.logging_utils import info, skip, stage, done
+from src.utils.logging_utils import stage, skip, info, done
+
+from src.utils.dimension_loader import load_dimension
 from src.utils.versioning import should_regenerate, save_version
-from src.facts.sales.sales import generate_sales_fact
-import os
+import shutil
 
 
-def run_sales_pipeline(sales_cfg, fact_out: Path, parquet_dims: Path, cfg):
-    """
-    Fully dependency-aware Sales pipeline.
-    Sales regenerates automatically if ANY upstream dimension changes.
-    """
-
-    # Path helper
-    def out(name):
-        return parquet_dims / f"{name}.parquet"
+def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
+    """Run the sales fact pipeline with correct deltaparquet handling."""
 
     # ------------------------------------------------------------
-    # Dependency detection
+    # Resolve and normalize key paths
     # ------------------------------------------------------------
-    def changed(name, section):
-        return should_regenerate(name, section, out(name))
+    fact_out = Path(fact_out).resolve()
+    parquet_dims = Path(parquet_dims).resolve()
 
-    sales_dependencies_changed = any([
-        changed("geography", cfg["geography"]),
-        changed("customers", cfg["customers"]),
-        changed("promotions", cfg["promotions"]),
-        changed("stores", cfg["stores"]),
-        changed("dates", cfg["dates"]),
-        changed("currency", cfg["exchange_rates"]),
-        changed("exchange_rates", cfg["exchange_rates"]),
-    ])
-
-    # Output path (used only for Parquet single-file output)
-    sales_out = fact_out / "sales.parquet"
+    fact_out.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------
-    # Run or skip Sales regeneration
+    # Dimension dependencies
     # ------------------------------------------------------------
-    if sales_dependencies_changed or should_regenerate("sales", sales_cfg, sales_out):
-        info("Dependency triggered: Sales will regenerate.")
+    def changed(name, section_cfg):
+        dim_file = parquet_dims / f"{name}.parquet"
+        return should_regenerate(name, section_cfg, dim_file)
 
-        # Extract global dates (your new config layout)
-        start_date = cfg["dates"]["dates"]["start"]
-        end_date   = cfg["dates"]["dates"]["end"]
 
-        # Partitioning config for Delta
-        partition_cfg = sales_cfg.get("partitioning", {})
-        partition_enabled = partition_cfg.get("enabled", False)
-        partition_cols    = partition_cfg.get("columns", [])
+    # sales_dependencies_changed = any([
+    #     changed("geography", cfg["geography"]),
+    #     changed("customers", cfg["customers"]),
+    #     changed("promotions", cfg["promotions"]),
+    #     changed("stores", cfg["stores"]),
+    #     changed("dates", cfg["dates"]),
+    #     changed("currency", cfg["exchange_rates"]),
+    #     changed("exchange_rates", cfg["exchange_rates"]),
+    # ])
 
     # ------------------------------------------------------------
-    # Run Sales regardless of format when regeneration is needed
+    # If dimensions changed → sales must regenerate
     # ------------------------------------------------------------
-    if sales_dependencies_changed or should_regenerate("sales", sales_cfg, sales_out):
-        info("Dependency triggered: Sales will regenerate.")
+    # if sales_dependencies_changed:
+    #     info("Dependency triggered: Sales will regenerate.")
+    # else:
+    #     delta_root = Path(sales_cfg["delta_output_folder"]).resolve()
 
-        # Enforce DeltaParquet behavior
-        if sales_cfg["file_format"] == "deltaparquet":
-            sales_cfg["write_delta"] = True
-            sales_cfg["merge_parquet"] = False
+    #     # Find at least one parquet file
+    #     parquet_files = list(delta_root.rglob("*.parquet"))
 
-        with stage("Generating Sales"):
-            generate_sales_fact(
-                parquet_folder=sales_cfg["parquet_folder"],
-                out_folder=fact_out,
+    #     if not parquet_files:
+    #         info("No sales parquet found — regenerating.")
+    #     else:
+    #         # Version anchor = first parquet file found
+    #         anchor_file = parquet_files[0]
 
-                total_rows=sales_cfg["total_rows"],
-                chunk_size=sales_cfg["chunk_size"],
+    #         if not should_regenerate("sales", sales_cfg, anchor_file):
+    #             skip("Sales up-to-date; skipping regeneration")
+    #             return
 
-                start_date=start_date,
-                end_date=end_date,
+    #     info("Dependency triggered: Sales will regenerate.")
 
-                row_group_size=sales_cfg["row_group_size"],
-                compression=sales_cfg["compression"],
+    info("Sales will regenerate (forced).")
 
-                merge_parquet=sales_cfg["merge_parquet"],
-                merged_file=sales_cfg["merged_file"],
-                delete_chunks=sales_cfg["delete_chunks"],
+    # ------------------------------------------------------------
+    # Delta output folder
+    # ------------------------------------------------------------
+    # Decide actual output folder based on file_format
+    fmt = sales_cfg["file_format"].lower()
 
-                heavy_pct=sales_cfg["heavy_pct"],
-                heavy_mult=sales_cfg["heavy_mult"],
+    if fmt == "csv":
+        sales_out_folder = Path(fact_out) / "csv"
+    elif fmt == "parquet":
+        sales_out_folder = Path(fact_out) / "parquet"
+    else:  # deltaparquet
+        delta_raw = sales_cfg.get("delta_output_folder", "delta")
+        sales_out_folder = Path(delta_raw).expanduser().resolve()
 
-                seed=sales_cfg["seed"],
-                file_format=sales_cfg["file_format"],
-                workers=sales_cfg["workers"],
-                tune_chunk=sales_cfg["tune_chunk"],
-                write_pyarrow=sales_cfg.get("write_pyarrow", True),
+    # Clean output folder every run
+    if sales_out_folder.exists():
+        shutil.rmtree(sales_out_folder, ignore_errors=True)
+    sales_out_folder.mkdir(parents=True, exist_ok=True)
 
-                write_delta=sales_cfg["write_delta"],
-                delta_output_folder=os.path.join(fact_out, sales_cfg["delta_output_folder"]),
+    info(f"Resolved sales output folder = {sales_out_folder}")
 
-                partition_enabled=partition_enabled,
-                partition_cols=partition_cols,
+    # ------------------------------------------------------------
+    # Run sales fact builder
+    # ------------------------------------------------------------
+    from src.facts.sales.sales import generate_sales_fact
 
-                skip_order_cols=sales_cfg.get("skip_order_cols", False),
-            )
+    parquet_folder = parquet_dims
 
-        save_version("sales", sales_cfg)
+    stage("Generating Sales")
+    t0 = time.time()
 
-    else:
-        skip("Sales up-to-date; skipping regeneration")
+    generate_sales_fact(
+        parquet_folder=str(parquet_folder),
+        out_folder=str(sales_out_folder),             # ✔ Corrected
+        total_rows=sales_cfg["total_rows"],
+        file_format=sales_cfg["file_format"],
+        row_group_size=sales_cfg.get("row_group_size", 2000000),
+        compression=sales_cfg.get("compression", "snappy"),
+        chunk_size=sales_cfg.get("chunk_size", 1000000),
+        workers=sales_cfg.get("workers", None),
+        partition_enabled=sales_cfg.get("partition_enabled", False),
+        partition_cols=sales_cfg.get("partition_cols", ["Year", "Month"]),
+        delta_output_folder=str(sales_out_folder),    # ✔ Also corrected
+        skip_order_cols=sales_cfg.get("skip_order_cols", False)
+    )
+
+    done(f"Generating Sales completed in {time.time() - t0:.1f}s")
+
+    # ------------------------------------------------------------
+    # Packaging
+    # ------------------------------------------------------------
+    from src.pipeline.packaging import package_output
+
+    stage("Creating Final Output Folder")
+    t1 = time.time()
+    package_output(cfg, sales_cfg, parquet_dims, fact_out)
+    done(f"Creating Final Output Folder completed in {time.time() - t1:.1f}s")
 
 
-    done("Sales pipeline complete.")

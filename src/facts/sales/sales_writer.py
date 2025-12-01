@@ -1,9 +1,18 @@
+# sales_writer.py
+# Hardened delta writer for Contoso Fake Generator
+# Inspects worker part files and builds a clean Delta table.
+# Based on uploaded file: :contentReference[oaicite:1]{index=1}
+
 import os
+import shutil
 import pyarrow as pa
 import pyarrow.parquet as pq
 from src.utils.logging_utils import info, skip, done
 
 
+# ----------------------------------------------------------------------
+# PARQUET MERGER (unchanged, safe)
+# ----------------------------------------------------------------------
 def merge_parquet_files(parquet_files, merged_file, delete_after=False):
     """
     Fully optimized parquet merger:
@@ -13,7 +22,6 @@ def merge_parquet_files(parquet_files, merged_file, delete_after=False):
     - Logs progress using info/skip/done
     """
 
-    # Keep only files that exist
     parquet_files = [p for p in parquet_files if os.path.exists(p)]
 
     if not parquet_files:
@@ -23,16 +31,10 @@ def merge_parquet_files(parquet_files, merged_file, delete_after=False):
     parquet_files = sorted(parquet_files)
     info(f"Merging {len(parquet_files)} chunks → {os.path.basename(merged_file)}...")
 
-    # ------------------------------------------------------------------
-    # STEP 1: Read schema from the FIRST file only (safe & fast)
-    # ------------------------------------------------------------------
-    first = parquet_files[0]
-    first_reader = pq.ParquetFile(first)
+    # Schema from first file
+    first_reader = pq.ParquetFile(parquet_files[0])
     schema = first_reader.schema_arrow
 
-    # Create writer for the merged file
-    # Enable dictionary encoding for low-cardinality columns only
-    # Exclude high-cardinality ones to avoid memory blow-up
     dict_cols = [
         c for c in schema.names
         if c not in ["SalesOrderNumber", "CustomerKey"]
@@ -41,36 +43,25 @@ def merge_parquet_files(parquet_files, merged_file, delete_after=False):
     writer = pq.ParquetWriter(
         merged_file,
         schema,
-        compression="snappy",           # or "lz4" to match chunks
-        use_dictionary=dict_cols,       # selective dictionary encoding
-        write_statistics=True,          # reduces final file size
+        compression="snappy",
+        use_dictionary=dict_cols,
+        write_statistics=True,
     )
 
-
-    # ------------------------------------------------------------------
-    # STEP 2: STREAM each chunk row-group-by-row-group
-    # ------------------------------------------------------------------
+    # Stream each row group
     for path in parquet_files:
         reader = pq.ParquetFile(path)
 
-        # Validate / reconcile schema
         if reader.schema_arrow != schema:
-            # Align schema (by selecting columns in consistent order)
-            table = reader.read()
-            table = table.select(schema.names)
+            table = reader.read().select(schema.names)
             writer.write_table(table)
             continue
 
-        # Fast path: stream each row group from this file
         for i in range(reader.num_row_groups):
-            rg = reader.read_row_group(i)
-            writer.write_table(rg)
+            writer.write_table(reader.read_row_group(i))
 
     writer.close()
 
-    # ------------------------------------------------------------------
-    # STEP 3: Delete chunks if requested
-    # ------------------------------------------------------------------
     if delete_after:
         for path in parquet_files:
             try:
@@ -80,3 +71,118 @@ def merge_parquet_files(parquet_files, merged_file, delete_after=False):
 
     done(f"Merged chunks → {os.path.basename(merged_file)}")
     return merged_file
+
+
+# ----------------------------------------------------------------------
+# DELTA-PARQUET PARTITION WRITER
+# ----------------------------------------------------------------------
+def write_delta_partitioned(parts_folder, delta_output_folder, partition_cols):
+    """
+    Convert worker parquet parts into a fully partitioned Delta table.
+
+    - Uses deltalake.write_deltalake() (REQUIRED). No pyarrow.dataset fallback.
+    - Reads worker part files (parquet) and concatenates using pandas.
+    - Sorts by partition_cols if provided for cleaner partition files.
+    - Writes a single clean Delta commit with partition_by=partition_cols.
+    - Cleans up _tmp_parts after successful write.
+    """
+
+    info("[DELTA] Assembling final partitioned dataset...")
+
+    parts_folder = os.path.abspath(parts_folder)
+    delta_output_folder = os.path.abspath(delta_output_folder)
+
+    if not os.path.exists(parts_folder):
+        raise FileNotFoundError(f"Parts folder not found: {parts_folder}")
+
+    part_files = sorted(
+        os.path.join(parts_folder, f)
+        for f in os.listdir(parts_folder)
+        if f.endswith(".parquet")
+    )
+    if not part_files:
+        raise RuntimeError("No delta part files found for deltaparquet output.")
+
+    # Read schema / preview from first part file (NO Arrow dataset)
+    first_file = part_files[0]
+    schema = pq.ParquetFile(first_file).schema_arrow
+    info(f"[DELTA] dataset schema fields: {schema.names}")
+
+    if partition_cols is None:
+        partition_cols = []
+
+    # Validate partition columns exist in schema
+    missing = [c for c in partition_cols if c not in schema.names]
+    if missing:
+        raise RuntimeError(f"Partition columns missing from dataset schema: {missing}")
+
+    # Ensure output folder exists and is empty (safe overwrite)
+    if os.path.exists(delta_output_folder):
+        # do not blindly delete entire folder - we will overwrite via write_deltalake
+        pass
+    else:
+        os.makedirs(delta_output_folder, exist_ok=True)
+
+    # Ensure deltalake is installed
+    try:
+        from deltalake import write_deltalake
+    except Exception as e:
+        raise RuntimeError(
+            "deltalake is not installed. Delta output is required; "
+            "pyarrow fallback is intentionally disabled to avoid corrupted output."
+        ) from e
+
+    # Build combined pandas DataFrame in a memory-conscious way:
+    # If dataset is large, this will use memory — consider chunking if needed.
+    import pandas as pd
+
+    info(f"[DELTA] Reading {len(part_files)} part files into pandas for concat...")
+    dfs = []
+    for pf in part_files:
+        try:
+            dfs.append(pd.read_parquet(pf))
+        except Exception as ex:
+            raise RuntimeError(f"Failed to read part file {pf}: {ex}") from ex
+
+    # Concatenate
+    try:
+        df_combined = pd.concat(dfs, ignore_index=True)
+    except Exception as ex:
+        raise RuntimeError(f"Failed to concat part-dataframes: {ex}") from ex
+
+    # Optional sort for stable partitions
+    if partition_cols:
+        info(f"[DELTA] Sorting combined dataframe by: {partition_cols}")
+        try:
+            df_combined = df_combined.sort_values(by=partition_cols)
+        except Exception:
+            # fallback: convert to pandas again (already pandas) — raise if fails
+            raise
+
+    # Convert to Arrow table
+    combined = pa.Table.from_pandas(df_combined, preserve_index=False)
+
+    # Final write: single clean delta commit
+    info("[DELTA] Writing real Delta Lake using deltalake.write_deltalake()")
+    try:
+        write_deltalake(
+            str(delta_output_folder),
+            combined,
+            mode="overwrite",
+            partition_by=partition_cols,
+        )
+    except Exception as ex:
+        raise RuntimeError(f"Failed to write delta table: {ex}") from ex
+
+    done("[DELTA] Real Delta table written cleanly (sorted partitions).")
+
+    # Remove temporary parts folder if present (cleanup)
+    tmp_parts = os.path.join(os.path.dirname(parts_folder), "_tmp_parts")
+    if os.path.exists(tmp_parts):
+        try:
+            shutil.rmtree(tmp_parts, ignore_errors=True)
+            info("Cleaning delta _tmp_parts")
+        except Exception:
+            pass
+
+    return

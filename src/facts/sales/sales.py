@@ -135,7 +135,7 @@ def generate_sales_fact(
     file_format="parquet",
     workers=None,
     tune_chunk=False,
-    write_delta=False,
+    write_delta=False,            # ← NOT USED ANYMORE
     delta_output_folder=None,
     skip_order_cols=False,
     write_pyarrow=True,
@@ -143,65 +143,39 @@ def generate_sales_fact(
     partition_cols=None
 ):
     """
-    Orchestrator for sales generation.
-    Performs:
-      - dimension loading
-      - mapping prep (store→geo→currency)
-      - promotions loading
-      - date weighting
-      - multiprocessing chunk generation
-      - optional merging
+    Clean patched version — delta uses ONLY partition writer.
     """
 
     ensure_dir(out_folder)
 
-    # ============================================================================
-    # FIXED DELTA FOLDER HANDLING — SIMPLE, SAFE, AND ALWAYS CORRECT
-    # ============================================================================
-
+    # 1) normalize delta_output_folder immediately
     if file_format == "deltaparquet":
-
-        # ALWAYS write to: <out_folder>/delta
-        # Ignore whatever was passed from config to avoid double-prefix bugs.
-        delta_output_folder = os.path.join(out_folder, "delta")
-
+        if delta_output_folder is None:
+            delta_output_folder = os.path.join(out_folder, "delta")
+        delta_output_folder = os.path.abspath(delta_output_folder)
         ensure_dir(delta_output_folder)
-
-    else:
-        delta_output_folder = None
-
-
+        ensure_dir(os.path.join(delta_output_folder, "_tmp_parts"))
 
     # ------------------------------------------------------------
-    # Load Customers
+    # Load dimensions (unchanged)
     # ------------------------------------------------------------
     customers_raw = load_parquet_column(
         os.path.join(parquet_folder, "customers.parquet"),
         "CustomerKey",
     )
-
     customers = build_weighted_customers(customers_raw, heavy_pct, heavy_mult, seed).astype(np.int64)
 
-    # ------------------------------------------------------------
-    # Load Products
-    # ------------------------------------------------------------
     prod_df = load_parquet_df(
         os.path.join(parquet_folder, "products.parquet"),
         ["ProductKey", "UnitPrice", "UnitCost"],
     )
     product_np = prod_df.to_numpy()
 
-    # ------------------------------------------------------------
-    # Load Stores
-    # ------------------------------------------------------------
     store_keys = load_parquet_column(
         os.path.join(parquet_folder, "stores.parquet"),
         "StoreKey"
     ).astype(np.int64)
 
-    # ------------------------------------------------------------
-    # Geography → Currency mapping
-    # ------------------------------------------------------------
     geo_path = os.path.join(parquet_folder, "geography.parquet")
     info(f"Loading geography from: {geo_path}")
 
@@ -214,24 +188,16 @@ def generate_sales_fact(
         os.path.join(parquet_folder, "currency.parquet")
     )[["CurrencyKey", "ISOCode"]]
 
-    # Merge to assign CurrencyKey to each GeographyKey
     geo_df = geo_df.merge(currency_df, on="ISOCode", how="left")
 
-    # Fill missing currency with USD or first available
     if geo_df["CurrencyKey"].isna().any():
         missing_count = geo_df["CurrencyKey"].isna().sum()
-
-        if "USD" in currency_df["ISOCode"].values:
-            default_row = currency_df[currency_df["ISOCode"] == "USD"].iloc[0]
-        else:
-            default_row = currency_df.iloc[0]
-
+        default_row = currency_df[currency_df["ISOCode"] == "USD"].iloc[0] \
+            if "USD" in currency_df["ISOCode"].values else currency_df.iloc[0]
         default_currency_key = int(default_row["CurrencyKey"])
         info(f"[sales] {missing_count} geography rows missing CurrencyKey — filling with {default_currency_key}")
-
         geo_df["CurrencyKey"] = geo_df["CurrencyKey"].fillna(default_currency_key)
 
-    # Build mapping dict
     geo_to_currency = dict(
         zip(
             geo_df["GeographyKey"].astype(np.int64),
@@ -239,9 +205,6 @@ def generate_sales_fact(
         )
     )
 
-    # ------------------------------------------------------------
-    # Store → Geo mapping
-    # ------------------------------------------------------------
     store_df = load_parquet_df(
         os.path.join(parquet_folder, "stores.parquet"),
         ["StoreKey", "GeographyKey"]
@@ -253,28 +216,18 @@ def generate_sales_fact(
         )
     )
 
-    # Validate missing geos (should be rare)
     referenced_geos = set(map(int, store_df["GeographyKey"].unique()))
     known_geos = set(map(int, geo_df["GeographyKey"].unique()))
-
     missing_geos = sorted(list(referenced_geos - known_geos))
     if missing_geos:
-        # fallback to default currency key
-        if "USD" in currency_df["ISOCode"].values:
-            default_row = currency_df[currency_df["ISOCode"] == "USD"].iloc[0]
-        else:
-            default_row = currency_df.iloc[0]
+        default_row = currency_df[currency_df["ISOCode"] == "USD"].iloc[0] \
+            if "USD" in currency_df["ISOCode"].values else currency_df.iloc[0]
         default_currency_key = int(default_row["CurrencyKey"])
-
-        info(f"[sales] WARNING: {len(missing_geos)} GeographyKey(s) referenced by stores missing from geography.parquet: {missing_geos}")
-        info(f"[sales] Assigning default CurrencyKey={default_currency_key} for these keys.")
-
+        info(f"[sales] WARNING: {len(missing_geos)} GeographyKey(s) missing from geography.parquet: {missing_geos}")
+        info(f"[sales] Assigning default CurrencyKey={default_currency_key}")
         for mg in missing_geos:
             geo_to_currency[int(mg)] = default_currency_key
 
-    # ------------------------------------------------------------
-    # Promotions
-    # ------------------------------------------------------------
     promo_df = pd.read_parquet(os.path.join(parquet_folder, "promotions.parquet"))
     if not promo_df.empty:
         promo_df["StartDate"] = pd.to_datetime(promo_df["StartDate"]).dt.normalize()
@@ -290,35 +243,27 @@ def generate_sales_fact(
         promo_start_all = np.array([], dtype="datetime64[D]")
         promo_end_all = np.array([], dtype="datetime64[D]")
 
-    # ------------------------------------------------------------
     # Weighted date pool
-    # ------------------------------------------------------------
     date_pool, date_prob = build_weighted_date_pool(start_date, end_date, seed)
 
-    # ------------------------------------------------------------
     # Chunk scheduling
-    # ------------------------------------------------------------
     tasks = []
     remaining = total_rows
-    idx = 0
     rng_master = np.random.default_rng(seed + 1)
-
-    seeds = rng_master.integers(1, 1<<30, size=ceil(total_rows / chunk_size))
+    seeds = rng_master.integers(1, 1 << 30, size=ceil(total_rows / chunk_size))
 
     idx = 0
-    remaining = total_rows
-    for seed in seeds:
+    for s in seeds:
         batch = min(chunk_size, remaining)
-        tasks.append((idx, batch, int(seed)))
+        tasks.append((idx, batch, int(s)))
         remaining -= batch
         idx += 1
         if remaining <= 0:
             break
 
-
     total_chunks = len(tasks)
 
-    # Determine workers
+    # worker count
     if workers is None:
         max_cores = max(1, cpu_count() - 1)
         n_workers = min(total_chunks, max_cores)
@@ -327,38 +272,38 @@ def generate_sales_fact(
 
     info(f"Spawning {n_workers} worker processes...")
 
-    # default promo key
     no_discount_key = 1
 
-    # Init args for worker
+    # Init args for workers
     initargs = (
-        product_np,          # 1
-        store_keys,          # 2
-        promo_keys_all,      # 3
-        promo_pct_all,       # 4
-        promo_start_all,     # 5
-        promo_end_all,       # 6
-        customers,           # 7
-        store_to_geo,        # 8
-        geo_to_currency,     # 9
-        date_pool,           # 10
-        date_prob,           # 11
-        out_folder,          # 12
-        file_format,         # 13
-        row_group_size,      # 14
-        compression,         # 15
-        no_discount_key,     # 16
-        delta_output_folder, # 17
-        write_delta,         # 18
-        skip_order_cols,     # 19
-        (file_format == "deltaparquet"),   # 20
-        partition_cols,      # 21
+        product_np,
+        store_keys,
+        promo_keys_all,
+        promo_pct_all,
+        promo_start_all,
+        promo_end_all,
+        customers,
+        store_to_geo,
+        geo_to_currency,
+        date_pool,
+        date_prob,
+        out_folder,
+        file_format,
+        row_group_size,
+        compression,
+        no_discount_key,
+        delta_output_folder,
+        (file_format == "deltaparquet"),
+        skip_order_cols,
+        (file_format == "deltaparquet"),   # partition flag in worker
+        partition_cols,
     )
 
     created_files = []
-    delta_part_paths = [] 
+    delta_part_paths = []
+
     # ------------------------------------------------------------
-    # Multiprocessing
+    # MULTIPROCESSING
     # ------------------------------------------------------------
     with Pool(
         processes=n_workers,
@@ -366,96 +311,46 @@ def generate_sales_fact(
         initargs=initargs
     ) as pool:
         for result in pool.imap_unordered(_worker_task, tasks):
-            # Normalize result to file path
+
             if isinstance(result, str):
-                # CSV or Parquet returned a path
                 created_files.append(result)
                 continue
-            
-            # deltaparquet -> ("delta", idx, table)
-            # DELTAPARQUET: worker returns {"delta_part": ..., "chunk": ..., "rows": ...}
+
             if isinstance(result, dict) and "delta_part" in result:
                 delta_part_paths.append(result["delta_part"])
-                total_rows += result.get("rows", 0)
                 continue
 
-            # unexpected cases
-            info(f"Worker returned unexpected result type: {result}")
-
+            info(f"Worker returned unexpected result: {result}")
 
     done("All chunks completed.")
 
-    # ==============================================================
-    # FINAL DELTA ASSEMBLY — READ PARQUET PARTS → WRITE DELTA TABLE
-    # ==============================================================
-
+    # ------------------------------------------------------------
+    # **FINAL DELTA-PARQUET ASSEMBLY**
+    # ------------------------------------------------------------
     if file_format == "deltaparquet":
-        info("MASTER: assembling Delta table from worker parquet parts...")
+        info("MASTER: assembling partitioned Delta-Parquet dataset...")
 
-        if not delta_part_paths:
-            info("MASTER: No delta parts found — cannot assemble Delta table.")
-            return created_files
+        from .sales_writer import write_delta_partitioned
 
-        # 1. READ ALL TEMP PARQUET PARTS INTO ARROW TABLES
-        tables = []
-        for p in delta_part_paths:
-            try:
-                tbl = pa.parquet.read_table(p, use_threads=True)
-                tables.append(tbl)   # <<< REQUIRED
-            except Exception as e:
-                info(f"MASTER: ERROR reading parquet part {p}: {e}")
-                raise
+        parts_folder = os.path.join(delta_output_folder, "_tmp_parts")
 
+        write_delta_partitioned(
+            parts_folder=parts_folder,
+            delta_output_folder=delta_output_folder,
+            partition_cols=partition_cols
+        )
 
-        # 2. CONCAT INTO ONE TABLE
-        try:
-            final_table = pa.concat_tables(tables, promote_options="default")
-        except Exception as e:
-            info(f"MASTER: ERROR concatenating tables: {e}")
-            raise
-
-        # 3. WRITE DELTA LAKE TABLE (single atomic operation)
-        try:
-            write_deltalake(
-                delta_output_folder,
-                final_table,
-                mode="append",
-                partition_by=partition_cols
-            )
-        except Exception as e:
-            import traceback
-            info("MASTER: write_deltalake ERROR:")
-            info(traceback.format_exc())
-            raise
-
-        info("MASTER: Delta table write DONE.")
-
-        # 4. DELETE TEMP PART FILES
-        for p in delta_part_paths:
-            try:
-                os.remove(p)
-            except Exception as e:
-                info(f"Could not delete temp part {p}: {e}")
-
-        # 5. DELETE TEMP DIR IF EMPTY
-        tmp_dir = os.path.join(delta_output_folder, "_tmp_parts")
-        if os.path.isdir(tmp_dir) and not os.listdir(tmp_dir):
-            os.rmdir(tmp_dir)
-
+        info("MASTER: Delta-Parquet partition write DONE.")
         return created_files
 
-
-
-
     # ------------------------------------------------------------
-    # CSV mode — no merge
+    # CSV mode — do nothing further
     # ------------------------------------------------------------
     if file_format == "csv":
-        info("CSV mode: writing CSV chunks only. No merge performed.")
         return created_files
 
     # ------------------------------------------------------------
-    # Merging parquet chunks (only if enabled)
+    # STANDARD PARQUET MERGE
     # ------------------------------------------------------------
     if file_format == "parquet":
         parquet_chunks = sorted(
@@ -464,19 +359,17 @@ def generate_sales_fact(
         )
 
         if parquet_chunks:
-            # merge and ask merge_parquet_files to delete chunk files it processed
             merge_parquet_files(
                 parquet_chunks,
                 os.path.join(out_folder, merged_file),
                 delete_after=True
             )
 
-        # FINAL SAFETY: remove any stray chunk files (ensures exactly one file left)
+        # cleanup
         for stray in glob.iglob(os.path.join(out_folder, "sales_chunk*.parquet")):
             try:
                 os.remove(stray)
-            except Exception:
-                info(f"Could not remove stray chunk file: {stray}")
-
+            except:
+                pass
 
     return created_files
