@@ -145,6 +145,7 @@ def init_sales_worker(
         "_G_date_pool": _G_date_pool,
         "_G_date_prob": _G_date_prob,
         "_G_skip_order_cols": _G_skip_order_cols,
+        "_G_file_format": _G_file_format,
     })
 
 

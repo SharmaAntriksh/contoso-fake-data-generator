@@ -16,7 +16,7 @@
     "parquet_folder": "./data/parquet_dims",
     "out_folder": "./data/fact_out",
 
-    "total_rows": 2000000,
+    "total_rows": 100000,
     "chunk_size": 100000,
 
     "file_format": "csv",
@@ -37,7 +37,7 @@
     "write_pyarrow": true,
     "tune_chunk": false,
 
-    "skip_order_cols": true,
+    "skip_order_cols": false,
 
     "override": {
       "dates": {

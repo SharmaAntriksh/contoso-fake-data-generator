@@ -23,6 +23,7 @@ _G_store_to_geo_arr = None
 _G_geo_to_currency_arr = None
 _G_store_to_geo = None
 _G_geo_to_currency = None
+_G_file_format = None
 
 _fmt = lambda dt: np.char.replace(np.datetime_as_string(dt, unit='D'), "-", "")
 
@@ -341,8 +342,10 @@ def _build_chunk_table(n, seed, no_discount_key=1):
         year_arr = (months_since_1970 // 12 + 1970).astype("int16")
         month_arr = (months_since_1970 % 12 + 1).astype("int8")
 
-        cols["Year"] = pa.array(year_arr, pa.int16())
-        cols["Month"] = pa.array(month_arr, pa.int8())
+        if _G_file_format == "deltaparquet":
+            cols["Year"] = pa.array(year_arr, pa.int16())
+            cols["Month"] = pa.array(month_arr, pa.int8())
+
 
         # --- KEEP EXACT SAME LOGIC FOR OPTIONAL COLUMNS ---
         if not skip_cols:
@@ -376,8 +379,9 @@ def _build_chunk_table(n, seed, no_discount_key=1):
         year_np = (months_since_1970 // 12 + 1970).astype("int16")
         month_np = (months_since_1970 % 12 + 1).astype("int8")
 
-        df["Year"] = year_np
-        df["Month"] = month_np
+        if _G_file_format == "deltaparquet":
+            df["Year"] = year_np
+            df["Month"] = month_np
 
         if not skip_cols:
             df["SalesOrderNumber"] = sales_order_num.astype(str)
