@@ -30,15 +30,15 @@ STATIC_SCHEMAS = {
     ],
 
     "Products": [
-        ("ProductKey",              "SMALLINT NOT NULL"),
+        ("ProductKey",              "INT NOT NULL"),
         ("ProductCode",             "VARCHAR(200)"),
         ("ProductName",             "VARCHAR(200)"),
-        ("ProductDescription",      "VARCHAR(200)"),
+        ("ProductDescription",      "VARCHAR(500)"),
         ("ProductSubcategoryKey",   "TINYINT"),
-        ("Brand",                   "VARCHAR(20)"),
-        ("Class",                   "VARCHAR(20)"),
-        ("Color",                   "VARCHAR(20)"),
-        ("StockTypeCode",           "VARCHAR(20)"),
+        ("Brand",                   "VARCHAR(30)"),
+        ("Class",                   "VARCHAR(30)"),
+        ("Color",                   "VARCHAR(30)"),
+        ("StockTypeCode",           "TINYINT"),
         ("StockType",               "VARCHAR(20)"),
         ("UnitCost",                "DECIMAL(10,2)"),
         ("UnitPrice",               "DECIMAL(10,2)")
@@ -167,8 +167,8 @@ STATIC_SCHEMAS = {
         ("SalesOrderLineNumber", "TINYINT"),
 
         ("CustomerKey",          "INT"),
-        ("ProductKey",           "SMALLINT"),
-        ("StoreKey",             "SMALLINT"),
+        ("ProductKey",           "INT"),
+        ("StoreKey",             "INT"),
         ("PromotionKey",         "SMALLINT"),
         ("CurrencyKey",          "TINYINT"),
 

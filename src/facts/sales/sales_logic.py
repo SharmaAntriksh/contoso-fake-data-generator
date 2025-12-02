@@ -242,30 +242,37 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     promo_pct  = np.zeros(n, dtype=np.float64)
 
     if promo_keys_all is not None and promo_keys_all.size > 0:
-        m = promo_keys_all.size
-        if m < 256:
-            # keep original vectorized fast path for typical small promo sets
-            od_expanded = od_np[:, None]
-            start_ok = od_expanded >= promo_start_all
-            end_ok   = od_expanded <= promo_end_all
-            mask_all = start_ok & end_ok
-            if mask_all.any():
-                # argmax returns first matching promo — preserve that behavior
-                chosen = np.argmax(mask_all, axis=1)
-                any_mask = mask_all.any(axis=1)
-                promo_keys = np.where(any_mask, promo_keys_all[chosen], promo_keys)
-                promo_pct  = np.where(any_mask, promo_pct_all[chosen], promo_pct)
-        else:
-            # safe loop-based assign that preserves "first-match-wins" semantics
-            # (assumes promo_keys_all is ordered same as before)
-            for pk, pstart, pend, ppct in zip(promo_keys_all, promo_start_all, promo_end_all, promo_pct_all):
-                sel = (od_np >= pstart) & (od_np <= pend)
-                if sel.any():
-                    # only fill where still default — preserves first-match semantics
-                    to_set = sel & (promo_keys == no_discount_key)
-                    if to_set.any():
-                        promo_keys[to_set] = pk
-                        promo_pct[to_set] = ppct
+
+        od_expanded = od_np[:, None]
+        start_ok = od_expanded >= promo_start_all
+        end_ok   = od_expanded <= promo_end_all
+        mask_all = start_ok & end_ok
+
+        rng = np.random.default_rng(seed)
+
+        NO_DISCOUNT_KEY = 1  # PromotionKey for no-discount promo
+
+        for i in range(n):
+            active = np.where(mask_all[i])[0]
+
+            if active.size == 0:
+                # no promo for this date
+                continue
+            
+            # Filter out the No-Discount promo from active results
+            actual_promos = [
+                j for j in active if promo_keys_all[j] != NO_DISCOUNT_KEY
+            ]
+
+            if actual_promos:
+                idx = rng.choice(actual_promos)
+                promo_keys[i] = promo_keys_all[idx]
+                promo_pct[i]  = promo_pct_all[idx]
+            else:
+                # ONLY the No-Discount promo is active → keep default value (1)
+                promo_keys[i] = NO_DISCOUNT_KEY
+                promo_pct[i]  = 0.0
+
 
 
     # ---------------------------------------------------------

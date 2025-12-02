@@ -46,6 +46,8 @@ def generate_bulk_insert_script(
         inferred_table = table_name or os.path.splitext(csv_file)[0].capitalize()
         csv_full_path = os.path.abspath(os.path.join(csv_folder, csv_file))
 
+        escaped_row_terminator = row_terminator.encode('unicode_escape').decode()
+
         stmt = f"""
 BULK INSERT {inferred_table}
 FROM '{csv_full_path}'
@@ -53,7 +55,7 @@ WITH (
     FORMAT = 'CSV',
     FIRSTROW = 2,
     FIELDTERMINATOR = '{field_terminator}',
-    ROWTERMINATOR = '{row_terminator}',
+    ROWTERMINATOR = '{escaped_row_terminator}',
     CODEPAGE = '{codepage}',
     TABLOCK
 );

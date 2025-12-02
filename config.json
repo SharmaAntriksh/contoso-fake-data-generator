@@ -4,7 +4,7 @@
     "seed": 42,
 
     "dates": {
-      "start": "2020-01-01",
+      "start": "2023-01-01",
       "end": "2025-10-18"
     },
 
@@ -16,10 +16,10 @@
     "parquet_folder": "./data/parquet_dims",
     "out_folder": "./data/fact_out",
 
-    "total_rows": 1000000,
+    "total_rows": 10000,
     "chunk_size": 1000000,
 
-    "file_format": "csv",
+    "file_format": "parquet",
     "write_delta": true,
     "delta_output_folder": "./data/fact_out/delta",
 
@@ -37,7 +37,7 @@
     "write_pyarrow": true,
     "tune_chunk": false,
 
-    "skip_order_cols": false,
+    "skip_order_cols": true,
 
     "override": {
       "dates": {
@@ -52,7 +52,7 @@
   },
 
   "customers": {
-    "total_customers": 49237,
+    "total_customers": 2237,
 
     "pct_india": 1,
     "pct_us": 60,
@@ -94,7 +94,7 @@
   "promotions": {
     "date_ranges": [],
 
-    "num_seasonal": 20,
+    "num_seasonal": 21,
     "num_clearance": 8,
     "num_limited": 12,
 
@@ -104,7 +104,7 @@
   },
 
   "stores": {
-    "num_stores": 500,
+    "num_stores": 50,
 
     "opening": {
       "start": "1995-01-01",
@@ -135,12 +135,12 @@
     "volatility": 0.02,
 
     "dates": {
-      "start": "2000-01-01"
+      "start": "2023-01-01"
     },
 
     "override": {
       "dates": {
-        "end": "2025-11-30"
+        "end": "2025-10-18"
       },
       "seed": null
     }
