@@ -1,91 +1,64 @@
 import pandas as pd
-import numpy as np
-
 
 def generate_exchange_rate_table(
     start_date,
     end_date,
     currencies,
-    base_currency="USD",
-    volatility=0.02,
-    seed=42
+    base_currency,
+    master_path
 ):
     """
-    Generate daily FX rates using a simple geometric random walk model.
-    Always produces:
-        - Base → Base rate (1.0)
-        - Base → Other rates
-
-    Parameters
-    ----------
-    start_date : str
-    end_date   : str
-    currencies : list of ISO currency codes (["USD", "EUR", ...])
-    base_currency : str
-    volatility : float  (daily std deviation)
-    seed : int
+    Robust slicer for the master exchange_rates parquet.
+    Ensures Date is normalized, To/FromCurrency exist, and returns the requested slice.
     """
 
-    rng = np.random.default_rng(seed)
-    dates = pd.date_range(start_date, end_date, freq="D")
+    # read
+    df = pd.read_parquet(master_path)
 
-    # ------------------------------------------------------------
-    # Realistic USD → X starting rates (fallback included)
-    # ------------------------------------------------------------
-    base_rates = {
-        "USD": 1.00,
-        "EUR": 0.90,
-        "INR": 83.00,
-        "GBP": 0.78,
-        "AUD": 1.45,
-        "CAD": 1.34,
-        "CNY": 6.80,
-        "JPY": 110.0,
-        "SGD": 1.35,
-        "DKK": 6.80,
-        "SEK": 9.50,
-        "CHF": 0.92,
-        "NZD": 1.55,
-        "ZAR": 18.0,
-    }
+    # basic sanity checks & normalization
+    if "Date" not in df.columns:
+        raise RuntimeError(f"master file {master_path} missing Date column")
+    if "FromCurrency" not in df.columns or "ToCurrency" not in df.columns:
+        raise RuntimeError(f"master file {master_path} missing currency columns")
 
-    # Add fallback for any missing currency
-    for c in currencies:
-        if c not in base_rates:
-            base_rates[c] = float(rng.uniform(0.5, 2.0))
+    # normalize Date column to pandas datetime (ensures no Timestamp/date mix)
+    df["Date"] = pd.to_datetime(df["Date"])
 
-    rows = []
+    # Normalize string columns (strip, upper) — helps avoid accidental mismatches
+    df["FromCurrency"] = df["FromCurrency"].astype(str).str.strip().str.upper()
+    df["ToCurrency"]   = df["ToCurrency"].astype(str).str.strip().str.upper()
 
-    # ------------------------------------------------------------
-    # BASE → BASE (straight line = 1.0)
-    # ------------------------------------------------------------
-    for d in dates:
-        rows.append({
-            "Date": d.date(),
-            "FromCurrency": base_currency,
-            "ToCurrency": base_currency,
-            "ExchangeRate": 1.0
-        })
+    # Normalize inputs
+    start = pd.to_datetime(start_date)
+    end   = pd.to_datetime(end_date)
+    base_currency = str(base_currency).upper()
+    currencies = [str(c).upper() for c in currencies]
 
-    # ------------------------------------------------------------
-    # BASE → OTHER (random walk)
-    # ------------------------------------------------------------
-    for c in currencies:
-        if c == base_currency:
-            continue
+    # Build mask
+    mask = (
+        (df["Date"] >= start) &
+        (df["Date"] <= end) &
+        (df["FromCurrency"] == base_currency) &
+        (df["ToCurrency"].isin(currencies))
+    )
 
-        rate = float(base_rates[c])
+    result = df.loc[mask].copy()
 
-        for d in dates:
-            shock = rng.normal(0, volatility)
-            rate *= (1 + shock)
-            rate = max(rate, 0.0001)  # avoid zeros
+    # If empty, give a helpful diagnostic sample
+    if result.empty:
+        # capture small samples to help debugging
+        sample_counts = df["ToCurrency"].value_counts().head(10).to_dict()
+        raise RuntimeError(
+            "Exchange rate slice is empty. Diagnostics:\n"
+            f"master total rows={len(df)}, sample ToCurrency counts={sample_counts}\n"
+            f"Requested base_currency={base_currency}, currencies={currencies}, start={start_date}, end={end_date}\n"
+            f"Master path: {master_path}"
+        )
 
-            rows.append({
-                "Date": d.date(),
-                "FromCurrency": base_currency,
-                "ToCurrency": c,
-                "ExchangeRate": round(rate, 6),
-            })
+    # ensure ExchangeRate numeric and rounded to 6 decimals
+    result["ExchangeRate"] = pd.to_numeric(result["ExchangeRate"], errors="coerce").round(6)
 
-    return pd.DataFrame(rows)
+    # final sort
+    result.sort_values(["Date", "ToCurrency"], inplace=True)
+    result.reset_index(drop=True, inplace=True)
+    return result

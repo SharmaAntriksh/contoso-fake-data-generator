@@ -5,7 +5,7 @@
 
     "dates": {
       "start": "2020-01-01",
-      "end": "2025-10-31"
+      "end": "2025-11-30"
     },
 
     "paths": {
@@ -19,7 +19,7 @@
     "total_rows": 100000,
     "chunk_size": 100000,
 
-    "file_format": "deltaparquet",
+    "file_format": "csv",
     "write_delta": true,
     "delta_output_folder": "./data/fact_out/delta",
 
@@ -134,9 +134,13 @@
     "base_currency": "USD",
     "volatility": 0.02,
 
+    "dates": {
+      "start": "2000-01-01"
+    },
+
     "override": {
       "dates": {
-        "end": "2025-10-31"
+        "end": "2025-11-30"
       },
       "seed": null
     }

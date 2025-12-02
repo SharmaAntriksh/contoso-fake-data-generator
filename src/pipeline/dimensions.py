@@ -13,6 +13,10 @@ from src.dimensions.geography_builder import build_dim_geography
 from src.utils.versioning import should_regenerate, save_version
 from src.utils.logging_utils import stage, info, skip, done
 
+from src.utils.fx_yahoo import build_or_update_fx
+from src.facts.sales.sales_writer import write_delta_partitioned
+import pandas as pd
+
 
 def expand_date_ranges(ranges):
     """
@@ -205,35 +209,89 @@ def generate_dimensions(cfg, parquet_dims: Path):
     else:
         skip("Currency dimension up-to-date; skipping regeneration")
 
-    # --------------------------------------------------
-    # Exchange Rates
-    # --------------------------------------------------
-    fx_need = changed("exchange_rates", cfg["exchange_rates"]) or changed("currency", cfg["exchange_rates"])
+    # -----------------------------
+    # Exchange Rates (use explicit FX dates if present)
+    # -----------------------------
+    from pathlib import Path
+    import pandas as pd
+
+    # -----------------------------
+    # FX Start/End Priority Logic
+    # -----------------------------
+
+    # Defaults
+    defaults_start = pd.to_datetime(cfg["defaults"]["dates"]["start"]).date()
+    defaults_end   = pd.to_datetime(cfg["defaults"]["dates"]["end"]).date()
+
+    # Optional FX-specific start date
+    fx_dates_cfg = cfg.get("exchange_rates", {}).get("dates", {}) or {}
+    fx_start_cfg = fx_dates_cfg.get("start", None)
+
+    if fx_start_cfg:
+        fx_start_cfg = pd.to_datetime(fx_start_cfg).date()
+        fx_start = min(defaults_start, fx_start_cfg)   # priority rule
+    else:
+        fx_start = defaults_start
+
+    # End date ALWAYS from defaults
+    fx_end = defaults_end
+
+    # normalize to pandas timestamps / date objects
+    fx_start = pd.to_datetime(fx_start).date()
+    fx_end   = pd.to_datetime(fx_end).date()
+
+    # master path (full history)
+    master_fx_path = parquet_dims / "exchange_rates.parquet"
+
+    # determine if regeneration is needed (Option A behavior)
+    if master_fx_path.exists():
+        fx_df = pd.read_parquet(master_fx_path)
+        fx_df["Date"] = pd.to_datetime(fx_df["Date"])
+        last_fx_date = fx_df["Date"].max().date()
+    else:
+        last_fx_date = None
+
+    # regenerate when missing or end not covered
+    fx_need = (last_fx_date is None) or (last_fx_date < fx_end)
 
     if fx_need:
         info("Dependency triggered: Exchange Rates will regenerate.")
         with stage("Generating Exchange Rates"):
-            base_start = cfg["defaults"]["dates"]["start"]
-            base_end   = cfg["defaults"]["dates"]["end"]
-
-            # Apply override
-            ovr = cfg["exchange_rates"].get("override", {}).get("dates", {})
-            start = ovr.get("start", base_start)
-            end   = ovr.get("end",   base_end)
-
-            df = generate_exchange_rate_table(
-                start,
-                end,
-                cfg["exchange_rates"]["currencies"],
-                cfg["exchange_rates"]["base_currency"],
-                cfg["exchange_rates"]["volatility"],
-                cfg["exchange_rates"].get("seed", cfg["defaults"]["seed"]),
+            # build or extend full history up to fx_end
+            build_or_update_fx(
+                start_date=fx_start.isoformat(),   # pass ISO string or date
+                end_date=fx_end.isoformat(),
+                out_path=parquet_dims / "exchange_rates.parquet"
             )
-            df.to_parquet(out("exchange_rates"), index=False)
+
+            # After build_or_update_fx returns, ensure we forward-fill missing calendar days
+            # (if you already implemented ffill in fx_yahoo.py this will be redundant but safe)
+            fx_full = pd.read_parquet(parquet_dims / "exchange_rates.parquet")
+            fx_full["Date"] = pd.to_datetime(fx_full["Date"])
+
+            # create full calendar and ffill per ToCurrency
+            full_range = pd.date_range(start=fx_full["Date"].min(), end=fx_full["Date"].max(), freq="D")
+            filled = []
+            for cur in sorted(fx_full["ToCurrency"].unique()):
+                sub = fx_full[fx_full["ToCurrency"] == cur].set_index("Date").sort_index()
+                sub = sub.reindex(full_range)
+                sub["FromCurrency"] = cfg["exchange_rates"].get("base_currency", "USD")
+                sub["ToCurrency"] = cur
+                # forward fill ExchangeRate; if leading NaNs remain, backfill (use last known before start)
+                sub["ExchangeRate"] = sub["ExchangeRate"].ffill().bfill()
+                filled.append(sub.reset_index().rename(columns={"index": "Date"}))
+            fx_filled = pd.concat(filled, ignore_index=True)
+            fx_filled.sort_values(["Date", "ToCurrency"], inplace=True)
+
+            # save final master (overwrite)
+            fx_filled.to_parquet(parquet_dims / "exchange_rates.parquet", index=False)
+
+            # copy to final exchange_rates.parquet (no slicing)
+            final_path = parquet_dims / "exchange_rates.parquet"
+            Path(final_path).write_bytes(Path(parquet_dims / "exchange_rates.parquet").read_bytes())
+
             save_version("exchange_rates", cfg["exchange_rates"])
-            info(f"Saved exchange_rates → {out('exchange_rates')}")
+            info(f"Saved exchange_rates → {final_path}")
+
     else:
         skip("Exchange Rates up-to-date; skipping regeneration")
-
-
-    done("All dimensions generated.")
