@@ -2,190 +2,155 @@
 #  CUSTOMERS DIMENSION (PIPELINE READY)
 # ---------------------------------------------------------
 
-import random
-from pathlib import Path
-from datetime import datetime
 import numpy as np
 import pandas as pd
+from pathlib import Path
 
-from src.utils.logging_utils import info, fail, skip, stage
+from src.utils.logging_utils import info, skip, stage
 from src.pipeline.versioning import should_regenerate, save_version
 from src.pipeline.dimension_loader import load_dimension
 
 
 # ---------------------------------------------------------
-#  GENERATION HELPERS  (your original functions)
+# Helpers
 # ---------------------------------------------------------
 
-def load_list(file_path):
-    """Utility to load a list from a text or CSV file."""
-    try:
-        return pd.read_csv(file_path, header=None)[0].tolist()
-    except Exception as e:
-        fail(f"Failed to load list from {file_path}: {e}")
-        raise
+def load_name_list(path: Path) -> list:
+    return pd.read_csv(path, header=None)[0].tolist()
 
 
-def load_real_geography(config):
-    """Attempt to load geography from parquet; fallback to CSV."""
-    try:
-        return load_dimension("geography", config)
-    except Exception:
-        path = config["customers"]["paths"]["geography"]
-        return pd.read_parquet(path)
+def random_choice(arr, size, rng):
+    return rng.choice(arr, size=size)
 
 
 # ---------------------------------------------------------
-#  CORE CUSTOMER GENERATION  (your existing logic)
+# Region-wise generation
 # ---------------------------------------------------------
 
-def generate_synthetic_customers(config):
-    customers_cfg = config["customers"]
+def generate_region_customers(
+    region_name: str,
+    count: int,
+    geography: pd.DataFrame,
+    names_folder: Path,
+    rng: np.random.Generator,
+    pct_org: float
+):
+    """Generate customers for a single region."""
+    if count == 0:
+        return pd.DataFrame()
 
-    seed = customers_cfg["seed"]
-    random.seed(seed)
-    np.random.seed(seed)
+    # ------------------- Names -------------------
+    if region_name == "United States":
+        male_first  = load_name_list(names_folder / "us_male_first.csv")
+        female_first = load_name_list(names_folder / "us_female_first.csv")
+        last_names  = load_name_list(names_folder / "us_surnames.csv")
 
-    names_folder = Path(customers_cfg["names_folder"])
+        genders = rng.choice(["M", "F"], size=count)
+        first_names = [
+            rng.choice(male_first) if g == "M" else rng.choice(female_first)
+            for g in genders
+        ]
+        last_names = random_choice(last_names, count, rng)
 
-    # ---------------------------------------------------------
-    # Load FIRST names from available regional files
-    # ---------------------------------------------------------
-    eu_first     = load_list(names_folder / "eu_first.csv")
-    india_first  = load_list(names_folder / "india_first.csv")
-    us_first     = (
-        load_list(names_folder / "us_male_first.csv")
-        + load_list(names_folder / "us_female_first.csv")
+    else:
+        first_list = load_name_list(names_folder / f"{region_name.lower()}_first.csv")
+        last_list  = load_name_list(names_folder / f"{region_name.lower()}_last.csv")
+        genders    = rng.choice(["M", "F"], size=count)
+        first_names = random_choice(first_list, count, rng)
+        last_names  = random_choice(last_list, count, rng)
+
+    # ------------------- Organization flag -------------------
+    is_org = rng.random(count) < pct_org
+    company_names = pd.Series([f"{region_name} Corp {i}" for i in range(count * 2)])
+    org_names = random_choice(company_names, count, rng)
+    person_full = pd.Series(first_names) + " " + pd.Series(last_names)
+    customer_names = np.where(is_org, org_names, person_full)
+
+    # ------------------- Geography -------------------
+    if region_name == "Europe":
+        geo_region = geography[geography["Continent"] == "Europe"]
+    else:
+        geo_region = geography[geography["Country"] == region_name]
+
+    selected_geo = geo_region.sample(
+        n=count,
+        replace=True,
+        random_state=rng.integers(0, 1e9)
     )
 
-    first_names = eu_first + india_first + us_first
-
-    # ---------------------------------------------------------
-    # Load LAST names from available regional files
-    # ---------------------------------------------------------
-    eu_last     = load_list(names_folder / "eu_last.csv")
-    india_last  = load_list(names_folder / "india_last.csv")
-    us_last     = load_list(names_folder / "us_surnames.csv")
-
-    last_names = eu_last + india_last + us_last
-
-    # Load geography
-    geography = load_real_geography(config)
-
-    pct_india = customers_cfg["pct_india"]
-    pct_us = customers_cfg["pct_us"]
-    pct_eu = customers_cfg["pct_eu"]
-    pct_org = customers_cfg["pct_org"]
-    total_customers = customers_cfg["total_customers"]
-
-    count_india = int(total_customers * pct_india)
-    count_us = int(total_customers * pct_us)
-    count_eu = int(total_customers * pct_eu)
-    count_org = int(total_customers * pct_org)
-
-    cust_geo = {
-        "India": geography[geography["Country"] == "India"],
-        "US": geography[geography["Country"] == "United States"],
-        "EU": geography[geography["Country"].isin(["Germany", "France", "Spain", "Italy"])],
-    }
-
-    def create_customers(count, region):
-        chosen = pd.DataFrame({
-            "CustomerKey": range(count),
-            "FirstName": np.random.choice(first_names, count),
-            "LastName": np.random.choice(last_names, count),
-            "Email": [
-                f"{fn.lower()}.{ln.lower()}@example.com"
-                for fn, ln in zip(
-                    np.random.choice(first_names, count),
-                    np.random.choice(last_names, count)
-                )
-            ],
-        })
-
-        geo_df = cust_geo.get(region)
-        if geo_df is None or geo_df.empty:
-            fail(f"No geography for region: {region}")
-            raise ValueError(f"No geography entries for region: {region}")
-
-        idx = np.random.randint(0, len(geo_df), count)
-        selected_geo = geo_df.iloc[idx]
-
-        chosen["StoreCity"] = selected_geo["City"].values
-        chosen["StoreState"] = selected_geo["State"].values
-        chosen["StoreCountry"] = selected_geo["Country"].values
-
-        return chosen
-
-    customers_list = [
-        create_customers(count_india, "India"),
-        create_customers(count_us, "US"),
-        create_customers(count_eu, "EU"),
-    ]
-
-    if count_org > 0:
-        org_df = pd.DataFrame({
-            "CustomerKey": range(count_org),
-            "FirstName": ["Org"] * count_org,
-            "LastName": [f"Corp{i}" for i in range(count_org)],
-            "Email": [f"contact{i}@organization.com" for i in range(count_org)],
-            "StoreCity": ["" for _ in range(count_org)],
-            "StoreState": ["" for _ in range(count_org)],
-            "StoreCountry": ["" for _ in range(count_org)],
-        })
-        customers_list.append(org_df)
-
-    df = pd.concat(customers_list, ignore_index=True)
-
-    # Ensure unique CustomerKey across all generated rows
-    df = df.reset_index(drop=True)
-    df["CustomerKey"] = (df.index + 1).astype(int)
-
-    df["DateOfBirth"] = [
-        datetime(
-            random.randint(1950, 2000),
-            random.randint(1, 12),
-            random.randint(1, 28)
-        )
-        for _ in range(len(df))
-    ]
-    df["Age"] = datetime.now().year - df["DateOfBirth"].dt.year
-
-    df["MaritalStatus"] = np.random.choice(["Single", "Married", "Divorced", "Widowed"], len(df))
-    df["NumberChildrenAtHome"] = np.random.randint(0, 4, size=len(df))
-    df["TotalChildren"] = df["NumberChildrenAtHome"] + np.random.randint(0, 2, size=len(df))
-    df["YearlyIncome"] = np.random.randint(20000, 150000, size=len(df))
-    df["Education"] = np.random.choice(
-        ["High School", "Bachelor", "Master", "PhD"], len(df)
-    )
+    df = pd.DataFrame({
+        "FullName": customer_names,
+        "Gender": genders,
+        "AddressLine1": "Address Placeholder",
+        "AddressLine2": "",
+        "City": selected_geo["City"].values,
+        "StateProvince": selected_geo["State"].values,
+        "Country": selected_geo["Country"].values,
+        "PostalCode": rng.integers(10000, 999999, size=count),   # or "000000"
+        "Region": region_name,
+        "IsOrganization": is_org.astype(int)
+    })
 
     return df
 
 
 # ---------------------------------------------------------
-#  PUBLIC PIPELINE ENTRYPOINT
+# Main generator
+# ---------------------------------------------------------
+
+def generate_synthetic_customers(cfg, parquet_dims_folder):
+    cust_cfg = cfg["customers"]
+    rng = np.random.default_rng(cust_cfg["seed"])
+
+    # Load geography dimension via loader
+    geography, geo_changed = load_dimension(
+        "geography",
+        parquet_dims_folder,
+        cfg["geography"]
+    )
+
+    total = cust_cfg["total_customers"]
+    pct_org = cust_cfg.get("pct_org", 0.1)
+    names_folder = Path("data/customer_names")
+
+    # Distribution
+    pct_india = cust_cfg.get("pct_india", 0.3)
+    pct_us    = cust_cfg.get("pct_us", 0.4)
+    pct_eu    = 1 - pct_india - pct_us
+
+    count_india = int(total * pct_india)
+    count_us    = int(total * pct_us)
+    count_eu    = total - count_india - count_us
+
+    # Generate
+    customers = []
+
+    with stage("Generating Customers"):
+        customers.append(generate_region_customers("India", count_india, geography, names_folder, rng, pct_org))
+        customers.append(generate_region_customers("United States", count_us, geography, names_folder, rng, pct_org))
+        customers.append(generate_region_customers("Europe", count_eu, geography, names_folder, rng, pct_org))
+
+        df = pd.concat(customers, ignore_index=True)
+
+        # 🔥 Final deterministic unique keys
+        df.insert(0, "CustomerKey", np.arange(1, len(df) + 1))
+
+    return df
+
+
+# ---------------------------------------------------------
+# Pipeline entry
 # ---------------------------------------------------------
 
 def run_customers(cfg, parquet_folder: Path):
-    """
-    Pipeline-aware wrapper around customer generation.
-    Handles:
-    - regeneration checks
-    - logging
-    - writing parquet
-    - versioning
-    """
-
     out_path = parquet_folder / "customers.parquet"
 
-    # Version Check
     if not should_regenerate("customers", cfg, out_path):
         skip("Customers up-to-date; skipping.")
         return
 
-    with stage("Generating Customers"):
-        df = generate_synthetic_customers(cfg)
-        df.to_parquet(out_path, index=False)
+    df = generate_synthetic_customers(cfg, parquet_folder)
+    df.to_parquet(out_path, index=False)
 
     save_version("customers", cfg, out_path)
-    info(f"Customers dimension generated → {out_path}")
+    info(f"Customers dimension written → {out_path}")
