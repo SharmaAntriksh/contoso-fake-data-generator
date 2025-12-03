@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from src.utils.logging_utils import stage, skip, info, done
-
-from src.utils.dimension_loader import load_dimension
-from src.utils.versioning import should_regenerate, save_version
 import shutil
+
+from src.utils.logging_utils import stage, skip, info, done
+from src.pipeline.dimension_loader import load_dimension
+from src.pipeline.versioning import should_regenerate, save_version
 
 
 def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):

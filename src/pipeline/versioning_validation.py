@@ -1,7 +1,7 @@
 from pathlib import Path
 from src.utils.logging_utils import info
-from src.utils.versioning import save_version
-from src.utils.versioning import _version_file as version_file_path  # exact same path logic as versioning.py
+from pipeline.versioning import save_version
+from pipeline.versioning import _version_file as version_file_path  # exact same path logic as versioning.py
 
 
 def ensure_dimension_version_exists(name: str, parquet_path: Path, cfg_section):

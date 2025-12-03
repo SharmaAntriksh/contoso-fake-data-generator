@@ -1,5 +1,5 @@
 from pathlib import Path
-from src.pipeline.dimensions import generate_dimensions
+from src.pipeline.dimensions_orchestrator import generate_dimensions
 from src.pipeline.sales_pipeline import run_sales_pipeline
 from src.utils.logging_utils import info, fail
 from src.pipeline.config_loader import load_config_file, load_config

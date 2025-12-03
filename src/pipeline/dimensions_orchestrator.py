@@ -2,20 +2,21 @@ import time
 from pathlib import Path
 from datetime import datetime
 import os
-from src.dimensions.customers import generate_synthetic_customers
-from src.dimensions.promotions import generate_promotions_catalog
-from src.dimensions.stores import generate_store_table
-from src.dimensions.dates import generate_date_table
-from src.dimensions.currency import generate_currency_dimension
-from src.dimensions.exchange_rates import generate_exchange_rate_table
-from src.dimensions.geography_builder import build_dim_geography
+import pandas as pd
 
-from src.utils.versioning import should_regenerate, save_version
+from src.pipeline.dimensions.customers import generate_synthetic_customers
+from src.pipeline.dimensions.promotions import generate_promotions_catalog
+from src.pipeline.dimensions.stores import generate_store_table
+from src.pipeline.dimensions.dates import generate_date_table
+from src.pipeline.dimensions.currency import generate_currency_dimension
+from src.pipeline.dimensions.exchange_rates import generate_exchange_rate_table
+from src.pipeline.dimensions.geography_builder import build_dim_geography
+
+from src.pipeline.versioning import should_regenerate, save_version
 from src.utils.logging_utils import stage, info, skip, done
 
-from src.utils.fx_yahoo import build_or_update_fx
+from src.services.fx_yahoo import build_or_update_fx
 from src.facts.sales.sales_writer import write_delta_partitioned
-import pandas as pd
 
 
 def expand_date_ranges(ranges):
