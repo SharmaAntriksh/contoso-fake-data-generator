@@ -5,13 +5,13 @@ from pathlib import Path
 import copy
 from typing import Dict, Any
 
-from src.pipeline.dimensions.geography import run_geography
-from src.pipeline.dimensions.customers import run_customers
-from src.pipeline.dimensions.stores import run_stores
-from src.pipeline.dimensions.promotions import run_promotions
-from src.pipeline.dimensions.dates import run_dates
-from src.pipeline.dimensions.currency import run_currency
-from src.pipeline.dimensions.exchange_rates import run_exchange_rates
+from src.dimensions.geography import run_geography
+from src.dimensions.customers import run_customers
+from src.dimensions.stores import run_stores
+from src.dimensions.promotions import run_promotions
+from src.dimensions.dates import run_dates
+from src.dimensions.currency import run_currency
+from src.dimensions.exchange_rates import run_exchange_rates
 
 
 def _get_defaults_dates(cfg: Dict[str, Any]):

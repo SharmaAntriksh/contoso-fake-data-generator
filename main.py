@@ -1,10 +1,10 @@
 from pathlib import Path
 import time
 
-from src.pipeline.dimensions_orchestrator import generate_dimensions
-from src.pipeline.sales_pipeline import run_sales_pipeline
+from src.engine.dimensions_runner import generate_dimensions
+from src.engine.sales_runner import run_sales_pipeline
 from src.utils.logging_utils import info, fail, PIPELINE_START_TIME, fmt_sec
-from src.pipeline.config_loader import load_config_file, load_config
+from src.engine.config_loader import load_config_file, load_config
 
 
 def main():

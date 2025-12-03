@@ -5,8 +5,9 @@ from pathlib import Path
 import shutil
 
 from src.utils.logging_utils import stage, skip, info, done
-from src.pipeline.dimension_loader import load_dimension
-from src.pipeline.versioning import should_regenerate, save_version
+from src.engine.dimension_loader import load_dimension
+from src.engine.versioning import should_regenerate, save_version
+from src.engine.packaging import package_output
 
 
 def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
@@ -81,7 +82,6 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     # ------------------------------------------------------------
     # Packaging
     # ------------------------------------------------------------
-    from src.pipeline.packaging import package_output
 
     stage("Creating Final Output Folder")
     t1 = time.time()

@@ -9,8 +9,8 @@ from pathlib import Path
 from faker import Faker
 
 from src.utils.logging_utils import info, skip, stage
-from src.pipeline.versioning import should_regenerate, save_version
-from src.pipeline.dimension_loader import load_dimension
+from src.engine.versioning import should_regenerate, save_version
+from src.engine.dimension_loader import load_dimension
 
 
 # ---------------------------------------------------------
