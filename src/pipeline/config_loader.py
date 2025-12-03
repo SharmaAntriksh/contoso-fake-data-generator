@@ -1,5 +1,34 @@
 import copy
+import json
+import yaml
 from datetime import datetime
+from pathlib import Path
+
+
+def load_config_file(path):
+    """
+    Load config from a JSON or YAML file.
+    Auto-detects format based on extension.
+    """
+    path = Path(path)
+    ext = path.suffix.lower()
+
+    if ext in (".yaml", ".yml"):
+        with open(path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+
+    if ext == ".json":
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    # auto-detect fallback
+    with open(path, "r", encoding="utf-8") as f:
+        txt = f.read().strip()
+        try:
+            return yaml.safe_load(txt)
+        except Exception:
+            return json.loads(txt)
+
 
 def load_config(cfg):
     """
@@ -8,7 +37,6 @@ def load_config(cfg):
         resolved["promotions"]
         resolved["customers"]
         etc.
-    each with final: seed, dates, paths, and local fields.
     """
     resolved = {}
     defaults = cfg.get("defaults", {})
@@ -16,6 +44,12 @@ def load_config(cfg):
     for section_name, section in cfg.items():
         if section_name == "defaults":
             continue
+
+        # Skip non-dict values (like final_output_folder)
+        if not isinstance(section, dict):
+            resolved[section_name] = section
+            continue
+
         resolved[section_name] = resolve_section(cfg, section_name, defaults)
 
     return resolved
@@ -23,7 +57,7 @@ def load_config(cfg):
 
 def resolve_section(cfg, section_name, defaults):
     """
-    Merge: defaults → module_section → override
+    Merge: defaults → section → override
     + special logic for promotions.date_ranges
     """
     section = copy.deepcopy(cfg.get(section_name, {}))
@@ -50,10 +84,9 @@ def resolve_section(cfg, section_name, defaults):
     # -----------------------------------------
     if section_name == "promotions":
         date_ranges = section.get("date_ranges", [])
-        if date_ranges:  # user provided custom promo windows
+        if date_ranges:
             out["date_ranges"] = date_ranges
         else:
-            # Convert global start/end → single range
             out["date_ranges"] = [{
                 "start": out["dates"]["start"],
                 "end": out["dates"]["end"]

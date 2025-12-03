@@ -2,9 +2,7 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 
-# IMPORTANT: import the *module*, not the variables
-from . import globals as gl
-
+from .globals import State, PA_AVAILABLE
 from .order_logic import build_orders
 from .date_logic import compute_dates
 from .promo_logic import apply_promotions
@@ -14,48 +12,46 @@ from .price_logic import compute_prices
 def build_chunk_table(n, seed, no_discount_key=1):
     """
     Build n synthetic sales rows.
-    Returns a pyarrow.Table or pandas DataFrame.
-    All global state is accessed through the shared `gl` module.
+    All shared state is read from `State`.
     """
     rng = np.random.default_rng(seed)
 
-    # Pull globals through module reference (correct way)
-    skip_cols = gl._G_skip_order_cols
+    # pull from State instead of _G_
+    skip_cols = State.skip_order_cols
+    product_np = State.product_np
+    customers = State.customers
+    date_pool = State.date_pool
+    date_prob = State.date_prob
+    store_keys = State.store_keys
 
-    product_np = gl._G_product_np
-    customers = gl._G_customers
-    date_pool = gl._G_date_pool
-    date_prob = gl._G_date_prob
-    store_keys = gl._G_store_keys
+    promo_keys_all = State.promo_keys_all
+    promo_pct_all = State.promo_pct_all
+    promo_start_all = State.promo_start_all
+    promo_end_all = State.promo_end_all
 
-    promo_keys_all = gl._G_promo_keys_all
-    promo_pct_all = gl._G_promo_pct_all
-    promo_start_all = gl._G_promo_start_all
-    promo_end_all = gl._G_promo_end_all
+    st2g_arr = State.store_to_geo_arr
+    g2c_arr = State.geo_to_currency_arr
+    store_to_geo = State.store_to_geo
+    geo_to_currency = State.geo_to_currency
 
-    st2g_arr = gl._G_store_to_geo_arr
-    g2c_arr = gl._G_geo_to_currency_arr
-    store_to_geo = gl._G_store_to_geo
-    geo_to_currency = gl._G_geo_to_currency
+    file_format = State.file_format
 
-    file_format = gl._G_file_format
-
-    # VALIDATE — these must not be None anymore
+    # Validate required globals
     if date_pool is None:
-        raise RuntimeError("FATAL: _G_date_pool is None (worker globals not bound)")
+        raise RuntimeError("State.date_pool is None")
     if product_np is None:
-        raise RuntimeError("FATAL: _G_product_np is None")
+        raise RuntimeError("State.product_np is None")
     if store_keys is None:
-        raise RuntimeError("FATAL: _G_store_keys is None")
+        raise RuntimeError("State.store_keys is None")
 
     _len_date_pool = len(date_pool)
     _len_customers = len(customers)
     _len_store_keys = len(store_keys)
     _len_products = len(product_np)
 
-    # ============================================================
+    # ------------------------------------------------------------
     # PRODUCTS
-    # ============================================================
+    # ------------------------------------------------------------
     prod_idx = rng.integers(0, _len_products, size=n)
     prods = product_np[prod_idx]
 
@@ -63,46 +59,36 @@ def build_chunk_table(n, seed, no_discount_key=1):
     unit_price = prods[:, 1].astype(np.float64, copy=False)
     unit_cost = prods[:, 2].astype(np.float64, copy=False)
 
-    # ============================================================
+    # ------------------------------------------------------------
     # STORE → GEO → CURRENCY
-    # ============================================================
-    store_key_arr = store_keys[
-        rng.integers(0, _len_store_keys, size=n)
-    ].astype(np.int64)
+    # ------------------------------------------------------------
+    store_key_arr = store_keys[rng.integers(0, _len_store_keys, size=n)].astype(np.int64)
 
     if st2g_arr is not None and g2c_arr is not None:
         try:
             max_key = int(store_key_arr.max()) if store_key_arr.size else -1
             if (
-                st2g_arr.ndim == 1 and g2c_arr.ndim == 1 and
-                max_key < st2g_arr.shape[0]
+                st2g_arr.ndim == 1 and g2c_arr.ndim == 1
+                and max_key < st2g_arr.shape[0]
             ):
                 geo_arr = st2g_arr[store_key_arr]
                 currency_arr = g2c_arr[geo_arr].astype(np.int64, copy=False)
             else:
-                raise IndexError("mapping arrays too small")
+                raise IndexError
         except Exception:
-            geo_arr = np.fromiter(
-                (store_to_geo.get(int(s), 0) for s in store_key_arr),
-                dtype=np.int64, count=n
-            )
-            currency_arr = np.fromiter(
-                (geo_to_currency.get(int(g), 0) for g in geo_arr),
-                dtype=np.int64, count=n
-            )
+            geo_arr = np.fromiter((store_to_geo.get(int(s), 0) for s in store_key_arr),
+                                   dtype=np.int64, count=n)
+            currency_arr = np.fromiter((geo_to_currency.get(int(g), 0) for g in geo_arr),
+                                       dtype=np.int64, count=n)
     else:
-        geo_arr = np.fromiter(
-            (store_to_geo.get(int(s), 0) for s in store_key_arr),
-            dtype=np.int64, count=n
-        )
-        currency_arr = np.fromiter(
-            (geo_to_currency.get(int(g), 0) for g in geo_arr),
-            dtype=np.int64, count=n
-        )
+        geo_arr = np.fromiter((store_to_geo.get(int(s), 0) for s in store_key_arr),
+                              dtype=np.int64, count=n)
+        currency_arr = np.fromiter((geo_to_currency.get(int(g), 0) for g in geo_arr),
+                                   dtype=np.int64, count=n)
 
-    # ============================================================
-    # ORDERS (order ids, assignment, line expansion)
-    # ============================================================
+    # ------------------------------------------------------------
+    # ORDERS
+    # ------------------------------------------------------------
     orders = build_orders(
         rng=rng,
         n=n,
@@ -123,9 +109,9 @@ def build_chunk_table(n, seed, no_discount_key=1):
 
     qty = np.clip(rng.poisson(3, n) + 1, 1, 10)
 
-    # ============================================================
+    # ------------------------------------------------------------
     # DATE LOGIC
-    # ============================================================
+    # ------------------------------------------------------------
     dates = compute_dates(
         rng=rng,
         n=n,
@@ -139,9 +125,9 @@ def build_chunk_table(n, seed, no_discount_key=1):
     delivery_status = dates["delivery_status"]
     is_order_delayed = dates["is_order_delayed"]
 
-    # ============================================================
+    # ------------------------------------------------------------
     # PROMOTIONS
-    # ============================================================
+    # ------------------------------------------------------------
     promo_keys, promo_pct = apply_promotions(
         rng=rng,
         n=n,
@@ -153,9 +139,9 @@ def build_chunk_table(n, seed, no_discount_key=1):
         no_discount_key=no_discount_key,
     )
 
-    # ============================================================
+    # ------------------------------------------------------------
     # PRICE LOGIC
-    # ============================================================
+    # ------------------------------------------------------------
     price = compute_prices(
         rng=rng,
         n=n,
@@ -169,10 +155,10 @@ def build_chunk_table(n, seed, no_discount_key=1):
     final_discount_amt = price["discount_amt"]
     final_net_price = price["final_net_price"]
 
-    # ============================================================
-    # OUTPUT (Arrow preferred)
-    # ============================================================
-    if gl.PA_AVAILABLE:
+    # ------------------------------------------------------------
+    # OUTPUT — Arrow first
+    # ------------------------------------------------------------
+    if PA_AVAILABLE:
         cols = {}
 
         if not skip_cols:
@@ -198,7 +184,6 @@ def build_chunk_table(n, seed, no_discount_key=1):
         cols["DeliveryStatus"] = pa.array(delivery_status, pa.string())
         cols["IsOrderDelayed"] = pa.array(is_order_delayed, pa.int8())
 
-        # partition columns for delta
         months = order_dates.astype("datetime64[M]").astype("int64")
         year_arr = (months // 12 + 1970).astype("int16")
         month_arr = (months % 12 + 1).astype("int8")
@@ -209,9 +194,9 @@ def build_chunk_table(n, seed, no_discount_key=1):
 
         return pa.table(cols)
 
-    # ============================================================
-    # PANDAS FALLBACK
-    # ============================================================
+    # ------------------------------------------------------------
+    # Pandas fallback
+    # ------------------------------------------------------------
     df = {}
 
     if not skip_cols:

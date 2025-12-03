@@ -1,0 +1,158 @@
+# Final output location for packaged datasets
+final_output_folder: "./generated_datasets"
+
+# ---------------------------------------------------------------------
+# DEFAULTS (used unless overridden in each section)
+# ---------------------------------------------------------------------
+defaults:
+  seed: 42
+
+  dates:
+    start: "2023-01-01"
+    end: "2025-10-18"
+
+  paths:
+    geography: "./data/parquet_dims/geography.parquet"
+
+
+# ---------------------------------------------------------------------
+# SALES FACT GENERATION
+# ---------------------------------------------------------------------
+sales:
+  parquet_folder: "./data/parquet_dims"
+  out_folder: "./data/fact_out"
+
+  total_rows: 10000
+  chunk_size: 1000000
+
+  file_format: "deltaparquet"          # csv | parquet | deltaparquet
+  write_delta: true
+  delta_output_folder: "./data/fact_out/delta"
+
+  merge_parquet: true
+  merged_file: "sales.parquet"
+  delete_chunks: true
+
+  row_group_size: 1000000
+  compression: "snappy"
+
+  heavy_pct: 5
+  heavy_mult: 5
+
+  workers: null               # auto-detect if null
+  write_pyarrow: true
+  tune_chunk: false
+
+  skip_order_cols: true
+
+  override:
+    dates:
+      end: "2025-10-31"
+    seed: null
+
+  partitioning:
+    enabled: true
+    columns: ["Year", "Month"]
+
+
+# ---------------------------------------------------------------------
+# CUSTOMERS
+# ---------------------------------------------------------------------
+customers:
+  total_customers: 2237
+
+  pct_india: 1
+  pct_us: 60
+  pct_eu: 39
+  pct_org: 5
+
+  names_folder: "./data/customer_names"
+
+  override:
+    seed: null
+    paths: {}
+    dates: {}
+
+
+# ---------------------------------------------------------------------
+# GEOGRAPHY / LOCATIONS
+# ---------------------------------------------------------------------
+geography:
+  target_rows: 200
+
+  country_weights:
+    United States: 0.35
+    India: 0.20
+    United Kingdom: 0.10
+    Germany: 0.10
+    France: 0.10
+    Australia: 0.07
+    Canada: 0.08
+    China: 0.00
+    Japan: 0.00
+    South Africa: 0.00
+    Rest: 0.00
+
+  override:
+    dates: {}
+    paths: {}
+    seed: null
+
+
+# ---------------------------------------------------------------------
+# PROMOTIONS
+# ---------------------------------------------------------------------
+promotions:
+  date_ranges: []
+
+  num_seasonal: 21
+  num_clearance: 8
+  num_limited: 12
+
+  override:
+    dates: {}
+
+
+# ---------------------------------------------------------------------
+# STORES / RETAIL OUTLETS
+# ---------------------------------------------------------------------
+stores:
+  num_stores: 50
+
+  opening:
+    start: "1995-01-01"
+    end: "2020-12-31"
+
+  closing_end: "2025-12-31"
+
+  override:
+    seed: null
+    paths: {}
+
+
+# ---------------------------------------------------------------------
+# DATES (Dimension)
+# ---------------------------------------------------------------------
+dates:
+  fiscal_month_offset: 5
+
+  override:
+    dates:
+      end: "2026-12-31"
+
+
+# ---------------------------------------------------------------------
+# EXCHANGE RATES
+# ---------------------------------------------------------------------
+exchange_rates:
+  currencies: ["USD", "EUR", "INR", "GBP", "AUD", "CAD"]
+  base_currency: "USD"
+  volatility: 0.02
+
+  dates:
+    start: "2023-01-01"
+
+  override:
+    dates:
+      end: "2025-10-18"
+    seed: null

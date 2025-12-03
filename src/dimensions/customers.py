@@ -22,10 +22,8 @@ def load_list(path):
 # =====================================================================
 def load_real_geography(config):
     """Load final geography parquet produced by geography_builder."""
-    path = config["customers"].get(
-        "geography_path",
-        "./data/parquet_dims/geography.parquet",
-    )
+    # New YAML-style geography path
+    path = config["customers"]["paths"]["geography"]
 
     if not os.path.isfile(path):
         raise FileNotFoundError(f"Geography not found: {path}")
@@ -46,7 +44,7 @@ def generate_synthetic_customers(config, save_customer_csv=False, out_cust="Synt
     pct_eu = cust_cfg["pct_eu"]
     pct_org = cust_cfg["pct_org"]
 
-    seed = cust_cfg.get("seed", config["defaults"]["seed"])
+    seed = cust_cfg["seed"]
     names_folder = cust_cfg["names_folder"]
 
     rng = np.random.default_rng(seed)

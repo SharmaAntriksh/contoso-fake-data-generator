@@ -4,71 +4,74 @@ import pyarrow as pa
 
 PA_AVAILABLE = pa is not None
 
-# ============================================================
-# GLOBAL STATE USED BY WORKERS + CHUNK BUILDER
-# ============================================================
 
-_G_skip_order_cols = None
-_G_product_np = None
-_G_customers = None
-_G_date_pool = None
-_G_date_prob = None
-_G_store_keys = None
+class State:
+    """
+    Shared global state container for sales logic.
+    All modules reference the same class attributes.
+    """
 
-_G_promo_keys_all = None
-_G_promo_pct_all = None
-_G_promo_start_all = None
-_G_promo_end_all = None
+    # core
+    skip_order_cols = None
+    product_np = None
+    customers = None
+    date_pool = None
+    date_prob = None
+    store_keys = None
 
-# Dense mapping arrays (fast path)
-_G_store_to_geo_arr = None
-_G_geo_to_currency_arr = None
+    # promotions
+    promo_keys_all = None
+    promo_pct_all = None
+    promo_start_all = None
+    promo_end_all = None
 
-# Fallback dict mapping
-_G_store_to_geo = None
-_G_geo_to_currency = None
+    # mappings
+    store_to_geo_arr = None
+    geo_to_currency_arr = None
+    store_to_geo = None
+    geo_to_currency = None
 
-# Output + format settings
-_G_file_format = None
-_G_out_folder = None
-_G_row_group_size = None
-_G_compression = None
+    # output config
+    file_format = None
+    out_folder = None
+    row_group_size = None
+    compression = None
 
-# Extra worker settings
-_G_no_discount_key = None
-_G_delta_output_folder = None
-_G_write_delta = None
+    # delta options
+    no_discount_key = None
+    delta_output_folder = None
+    write_delta = None
 
-_G_partition_enabled = None
-_G_partition_cols = None
+    # partitioning
+    partition_enabled = None
+    partition_cols = None
 
-# Utility
-_fmt = lambda dt: np.char.replace(np.datetime_as_string(dt, unit='D'), "-", "")
+    @staticmethod
+    def reset():
+        """
+        Reset all state fields (useful for tests or dev).
+        """
+        for key, val in list(vars(State).items()):
+            if not key.startswith("__") and not callable(val):
+                setattr(State, key, None)
 
-# Worker initializer injects all globals here
-def bind_globals(gdict):
-    globals().update(gdict)
+    @staticmethod
+    def validate(required):
+        """
+        Validate that required state fields are populated.
+        """
+        for r in required:
+            if getattr(State, r) is None:
+                raise RuntimeError(f"State.{r} is not set")
 
 
-__all__ = [
-    "PA_AVAILABLE",
-    "_G_skip_order_cols",
-    "_G_product_np", "_G_customers",
-    "_G_date_pool", "_G_date_prob", "_G_store_keys",
-    "_G_promo_keys_all", "_G_promo_pct_all",
-    "_G_promo_start_all", "_G_promo_end_all",
-    "_G_store_to_geo_arr", "_G_geo_to_currency_arr",
-    "_G_store_to_geo", "_G_geo_to_currency",
+def bind_globals(gdict: dict):
+    for k, v in gdict.items():
+        setattr(State, k, v)
 
-    "_G_file_format", "_G_out_folder",
-    "_G_row_group_size", "_G_compression",
 
-    "_G_no_discount_key",
-    "_G_delta_output_folder",
-    "_G_write_delta",
+def fmt(dt):
+    return np.char.replace(np.datetime_as_string(dt, unit='D'), "-", "")
 
-    "_G_partition_enabled",
-    "_G_partition_cols",
 
-    "_fmt", "bind_globals"
-]
+__all__ = ["State", "bind_globals", "fmt", "PA_AVAILABLE"]

@@ -101,9 +101,9 @@ def generate_dimensions(cfg, parquet_dims: Path):
 
             else:
                 # Use global defaults.dates
-                global_dates = cfg["defaults"]["dates"]
-                start = global_dates["start"]
-                end = global_dates["end"]
+                promo_dates = cfg["promotions"]["dates"]
+                start = promo_dates["start"]
+                end = promo_dates["end"]
 
                 # Apply override if present
                 override_dates = promo_cfg.get("override", {}).get("dates", {})
@@ -140,7 +140,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
                 num_seasonal=promo_cfg["num_seasonal"],
                 num_clearance=promo_cfg["num_clearance"],
                 num_limited=promo_cfg["num_limited"],
-                seed=promo_cfg.get("seed", cfg.get("defaults", {}).get("seed")),
+                seed = promo_cfg["seed"],
             )
 
             df.to_parquet(out("promotions"), index=False)
@@ -161,8 +161,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
         info("Dependency triggered: Stores will regenerate.")
         with stage("Generating Stores"):
 
-            base_seed = cfg["defaults"]["seed"]
-            seed = cfg["stores"].get("override", {}).get("seed", cfg["stores"].get("seed", base_seed))
+            seed = cfg["stores"]["seed"]
 
             df = generate_store_table(
                 geography_parquet_path=os.path.join(parquet_dims, "geography.parquet"),
@@ -181,13 +180,8 @@ def generate_dimensions(cfg, parquet_dims: Path):
     # --------------------------------------------------
     if changed("dates", cfg["dates"]):
         with stage("Generating Dates"):
-            base_start = cfg["defaults"]["dates"]["start"]
-            base_end   = cfg["defaults"]["dates"]["end"]
-
-            # Apply overrides
-            ovr = cfg["dates"].get("override", {}).get("dates", {})
-            start = ovr.get("start", base_start)
-            end   = ovr.get("end",   base_end)
+            start = cfg["dates"]["dates"]["start"]
+            end   = cfg["dates"]["dates"]["end"]
 
             df = generate_date_table(start, end, cfg["dates"]["fiscal_month_offset"])
             df.to_parquet(out("dates"), index=False)
@@ -220,8 +214,8 @@ def generate_dimensions(cfg, parquet_dims: Path):
     # -----------------------------
 
     # Defaults
-    defaults_start = pd.to_datetime(cfg["defaults"]["dates"]["start"]).date()
-    defaults_end   = pd.to_datetime(cfg["defaults"]["dates"]["end"]).date()
+    defaults_start = pd.to_datetime(cfg["exchange_rates"]["dates"]["start"]).date()
+    defaults_end   = pd.to_datetime(cfg["exchange_rates"]["dates"]["end"]).date()
 
     # Optional FX-specific start date
     fx_dates_cfg = cfg.get("exchange_rates", {}).get("dates", {}) or {}

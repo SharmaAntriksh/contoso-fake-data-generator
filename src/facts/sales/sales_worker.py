@@ -1,45 +1,19 @@
-# sales_worker.py — Optimized for Arrow-first speed, vector worker generation,
-# deltaparquet improvements (worker-side writes), and lower memory use.
+# sales_worker.py — cleaned for State-based global binding
 
 import os
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
+import time
 
 from src.utils.logging_utils import work
-from .sales_logic import chunk_builder, globals as gl
+from .sales_logic import chunk_builder
+from .sales_logic.globals import State, bind_globals
 
 
-# Module-level globals (kept same names as sales_logic expects)
-_G_product_np = None
-_G_store_keys = None
-_G_promo_keys_all = None
-_G_promo_pct_all = None
-_G_promo_start_all = None
-_G_promo_end_all = None
-_G_customers = None
-_G_store_to_geo = None
-_G_geo_to_currency = None
-_G_date_pool = None
-_G_date_prob = None
-
-# Dense mapping arrays for vectorized lookup (optional fast-path)
-_G_store_to_geo_arr = None
-_G_geo_to_currency_arr = None
-
-_G_out_folder = None
-_G_file_format = None
-_G_row_group_size = 250_000
-_G_compression = "snappy"
-
-_G_no_discount_key = None
-_G_delta_output_folder = None
-_G_write_delta = False
-_G_skip_order_cols = False
-
-_G_partition_enabled = False
-_G_partition_cols = None
-
+# ===============================================================
+# Worker initializer
+# ===============================================================
 
 def init_sales_worker(
     product_np,
@@ -64,105 +38,81 @@ def init_sales_worker(
     partition_enabled,
     partition_cols,
 ):
-    """Initialize module globals and bind into sales_logic."""
-    global _G_product_np, _G_store_keys, _G_promo_keys_all, _G_promo_pct_all
-    global _G_promo_start_all, _G_promo_end_all, _G_customers, _G_store_to_geo
-    global _G_geo_to_currency, _G_date_pool, _G_date_prob, _G_out_folder
-    global _G_file_format, _G_row_group_size, _G_compression, _G_no_discount_key
-    global _G_delta_output_folder, _G_write_delta, _G_skip_order_cols
-    global _G_partition_enabled, _G_partition_cols
-    global _G_store_to_geo_arr, _G_geo_to_currency_arr
-    
-    _G_product_np = product_np
-    _G_store_keys = store_keys
-    _G_promo_keys_all = promo_keys_all
-    _G_promo_pct_all = promo_pct_all
-    _G_promo_start_all = promo_start_all
-    _G_promo_end_all = promo_end_all
-    _G_customers = customers
-    _G_store_to_geo = store_to_geo
-    _G_geo_to_currency = geo_to_currency
-    _G_date_pool = date_pool
-    _G_date_prob = date_prob
+    """
+    Initialize global state using the new 'State' container.
+    Called once per worker at pool startup.
+    """
 
-    _G_out_folder = out_folder
-    _G_file_format = file_format
-    _G_row_group_size = row_group_size
-    _G_compression = compression
-
-    _G_no_discount_key = no_discount_key
-    _G_delta_output_folder = os.path.normpath(delta_output_folder)
-    _G_write_delta = write_delta
-    _G_skip_order_cols = skip_order_cols
-
-    _G_partition_enabled = partition_enabled
-    _G_partition_cols = partition_cols
-
-    # ------------------------------------------------------------
     # Build dense numpy mapping arrays for fast vectorized lookup
-    # (safe fallback to dict mode if keys are sparse or inconsistent)
-    # ------------------------------------------------------------
+    store_to_geo_arr = None
+    geo_to_currency_arr = None
 
-    # ---- STORE → GEO array ----
     try:
-        if isinstance(_G_store_to_geo, dict) and len(_G_store_to_geo) > 0:
-            max_store = max(_G_store_to_geo.keys())
+        if isinstance(store_to_geo, dict) and store_to_geo:
+            max_store = max(store_to_geo.keys())
             arr = np.full(max_store + 1, -1, dtype=np.int64)
-            for k, v in _G_store_to_geo.items():
+            for k, v in store_to_geo.items():
                 arr[int(k)] = int(v)
-            _G_store_to_geo_arr = arr
-        else:
-            _G_store_to_geo_arr = None
+            store_to_geo_arr = arr
     except Exception:
-        _G_store_to_geo_arr = None
+        store_to_geo_arr = None
 
-    # ---- GEO → CURRENCY array ----
     try:
-        if isinstance(_G_geo_to_currency, dict) and len(_G_geo_to_currency) > 0:
-            max_geo = max(_G_geo_to_currency.keys())
-            arr2 = np.full(max_geo + 1, -1, dtype=np.int64)
-            for k, v in _G_geo_to_currency.items():
-                arr2[int(k)] = int(v)
-            _G_geo_to_currency_arr = arr2
-        else:
-            _G_geo_to_currency_arr = None
+        if isinstance(geo_to_currency, dict) and geo_to_currency:
+            max_geo = max(geo_to_currency.keys())
+            arr = np.full(max_geo + 1, -1, dtype=np.int64)
+            for k, v in geo_to_currency.items():
+                arr[int(k)] = int(v)
+            geo_to_currency_arr = arr
     except Exception:
-        _G_geo_to_currency_arr = None
+        geo_to_currency_arr = None
 
+    # Bind everything to the State container
+    bind_globals({
+        "product_np": product_np,
+        "store_keys": store_keys,
+        "promo_keys_all": promo_keys_all,
+        "promo_pct_all": promo_pct_all,
+        "promo_start_all": promo_start_all,
+        "promo_end_all": promo_end_all,
+        "customers": customers,
 
-    # update sales_logic globals in one shot
-    gl.bind_globals({
-        "_G_product_np": _G_product_np,
-        "_G_store_keys": _G_store_keys,
-        "_G_promo_keys_all": _G_promo_keys_all,
-        "_G_promo_pct_all": _G_promo_pct_all,
-        "_G_promo_start_all": _G_promo_start_all,
-        "_G_promo_end_all": _G_promo_end_all,
-        "_G_customers": _G_customers,
-        "_G_store_to_geo": _G_store_to_geo,
-        "_G_geo_to_currency": _G_geo_to_currency,
-        "_G_store_to_geo_arr": _G_store_to_geo_arr,
-        "_G_geo_to_currency_arr": _G_geo_to_currency_arr,
-        "_G_date_pool": _G_date_pool,
-        "_G_date_prob": _G_date_prob,
-        "_G_skip_order_cols": _G_skip_order_cols,
-        "_G_file_format": _G_file_format,
+        "store_to_geo": store_to_geo,
+        "geo_to_currency": geo_to_currency,
+        "store_to_geo_arr": store_to_geo_arr,
+        "geo_to_currency_arr": geo_to_currency_arr,
+
+        "date_pool": date_pool,
+        "date_prob": date_prob,
+
+        "skip_order_cols": skip_order_cols,
+        "file_format": file_format,
+        "out_folder": out_folder,
+        "row_group_size": row_group_size,
+        "compression": compression,
+
+        "no_discount_key": no_discount_key,
+        "delta_output_folder": os.path.normpath(delta_output_folder),
+        "write_delta": write_delta,
+
+        "partition_enabled": partition_enabled,
+        "partition_cols": partition_cols,
     })
 
 
+# ===============================================================
+# Utilities
+# ===============================================================
+
 def _stream_write_parquet(table: pa.Table, path: str, compression: str, row_group_size: int):
-    """Write a pyarrow.Table to parquet in streaming (row-group) mode to limit memory."""
-    # Put typical partition columns at the end for nicer file layout (non-copying select)
+    """Efficient streaming parquet writer for large tables."""
     part_cols = [c for c in ("Year", "Month") if c in table.column_names]
     if part_cols:
         normal_cols = [c for c in table.column_names if c not in part_cols]
         table = table.select(normal_cols + part_cols)
 
-    # Enable dictionary encoding for all columns EXCEPT SalesOrderNumber
-    dict_cols = [
-        c for c in table.column_names
-        if c not in ["SalesOrderNumber", "CustomerKey"]
-    ]
+    dict_cols = [c for c in table.column_names if c not in ["SalesOrderNumber", "CustomerKey"]]
+
     writer = pq.ParquetWriter(
         path,
         table.schema,
@@ -173,7 +123,6 @@ def _stream_write_parquet(table: pa.Table, path: str, compression: str, row_grou
 
     try:
         total = table.num_rows
-        # Write in row-group-sized slices to avoid allocating huge memory buffers
         for start in range(0, total, int(row_group_size)):
             length = min(int(row_group_size), total - start)
             writer.write_table(table.slice(start, length))
@@ -182,140 +131,95 @@ def _stream_write_parquet(table: pa.Table, path: str, compression: str, row_grou
 
 
 def _try_write_csv_arrow(table: pa.Table, out_path: str) -> bool:
-    """
-    Try to write CSV using pyarrow.csv (faster + Arrow-native) when available.
-    Returns True if written, False if fallback required.
-    """
+    """Try Arrow CSV write; fallback to pandas if needed."""
     try:
-        # pyarrow.csv.write_csv exists in pyarrow >= 1.0; prefer that (zero-copy)
-        import pyarrow.csv as pacsv  # local import (safe)
+        import pyarrow.csv as pacsv
         pacsv.write_csv(table, out_path)
         return True
     except Exception:
         return False
 
 
-def _ensure_arrow_table(table_or_df):
-    """Return a pyarrow.Table, minimizing copies when possible."""
-    if isinstance(table_or_df, pa.Table):
-        return table_or_df
-    # Assume pandas DataFrame otherwise; use safe=False to skip copying/validation where possible
-    return pa.Table.from_pandas(table_or_df, preserve_index=False, safe=False)
+def _ensure_arrow_table(obj):
+    if isinstance(obj, pa.Table):
+        return obj
+    return pa.Table.from_pandas(obj, preserve_index=False, safe=False)
 
 
-def _extract_partition_cols(table: pa.Table) -> pa.Table:
-    """
-    Append Year and Month columns from an OrderDate column (if present).
-    Uses numpy views on Arrow arrays for high performance.
-    """
-    if "OrderDate" not in table.column_names:
-        return table
-
-    # Use Arrow's to_numpy — returns numpy datetime64[...] (may be zero-copy)
-    od = table["OrderDate"].to_numpy()  # datetime64[ns] or similar
-    # Convert to year and month integers with vectorized arithmetic
-    # Year: convert to datetime64[Y] then to int + 1970
-    years = (od.astype("datetime64[Y]").astype(int) + 1970).astype(np.int16)
-    months = (od.astype("datetime64[M]").astype(int) % 12 + 1).astype(np.int8)
-
-    # Append both columns (pa.array will copy the small arrays only)
-    table = table.append_column("Year", pa.array(years, type=pa.int16()))
-    table = table.append_column("Month", pa.array(months, type=pa.int8()))
-    return table
-
-import time
-t0 = time.perf_counter()
+# ===============================================================
+# Worker Task (computes + writes one chunk)
+# ===============================================================
 
 def _worker_task(args):
-    """
-    Worker entrypoint for one chunk.
-    args: (idx, batch_size, seed)
-    Returns:
-      - path string for file outputs ('csv' or 'parquet'), or
-      - ("delta", idx, table) when deltaparquet return-to-main is used, or
-      - ("delta", idx, path) when deltaparquet + _G_write_delta is enabled (worker wrote file).
-    """
-    
     idx, batch_size, seed = args
 
-    # --- Ensure per-worker unique seed to avoid identical chunks when upstream reuses seed ---
-    # If upstream supplies a good unique seed, this will not disturb it.
-    # If upstream mistakenly passes the same seed for many workers, we add a lightweight, unique
-    # perturbation combining worker idx, pid and current time low bits so chunks differ.
+    # Derive per-chunk seed
     try:
         pid = os.getpid()
     except Exception:
         pid = idx
 
-    # allow None seeds — treat as 0
     base_seed = int(seed) if seed is not None else 0
-    # mix in idx + pid and low bits of current time for quick entropy
     seed_for_chunk = base_seed ^ (idx + pid + (int(time.time()) & 0xFFFF))
 
-    # Build the chunk (sales_logic._build_chunk_table should be vectorized when possible)
-    # pass the computed seed_for_chunk so each worker produces different data
-    table_or_df = chunk_builder.build_chunk_table(batch_size, seed_for_chunk, no_discount_key=_G_no_discount_key)
+    # Build the data chunk
+    table_or_df = chunk_builder.build_chunk_table(
+        batch_size,
+        seed_for_chunk,
+        no_discount_key=State.no_discount_key,
+    )
 
-
-    # Ensure Arrow table quickly (fast path if already Arrow)
     table = _ensure_arrow_table(table_or_df)
 
-    # Partitioning:
-    # Year/Month are already created inside sales_logic._build_chunk_table().
-    # Workers must NOT add these again, otherwise Arrow sees duplicate fields.
-    # Therefore we do nothing here.
-
-
     # ------------------------------------------------------------
-    # DELTAPARQUET — Workers write ONLY temp parquet parts
+    # DELTAPARQUET MODE
     # ------------------------------------------------------------
-    if _G_file_format == "deltaparquet":
-
-        # Workers write into:  <delta_output_folder>/_tmp_parts/
-        tmp_dir = os.path.join(_G_delta_output_folder, "_tmp_parts")
+    if State.file_format == "deltaparquet":
+        tmp_dir = os.path.join(State.delta_output_folder, "_tmp_parts")
         os.makedirs(tmp_dir, exist_ok=True)
-
 
         out_path = os.path.join(tmp_dir, f"delta_part_{idx:04d}.parquet")
 
-        t_io0 = time.perf_counter()
         _stream_write_parquet(
             table,
             out_path,
-            compression=_G_compression,
-            row_group_size=int(_G_row_group_size)
+            compression=State.compression,
+            row_group_size=int(State.row_group_size),
         )
+
         work(chunk=idx, outfile=out_path)
 
-        # Return path (never Arrow table)
         return {
             "delta_part": out_path,
             "chunk": idx,
-            "rows": table.num_rows
+            "rows": table.num_rows,
         }
 
+    # ------------------------------------------------------------
+    # CSV MODE
+    # ------------------------------------------------------------
+    if State.file_format == "csv":
+        os.makedirs(State.out_folder, exist_ok=True)
+        out_path = os.path.join(State.out_folder, f"sales_chunk{idx:04d}.csv")
 
-
-    # CSV MODE (prefer Arrow CSV writer)
-    if _G_file_format == "csv":
-        os.makedirs(_G_out_folder, exist_ok=True)
-        out_path = os.path.join(_G_out_folder, f"sales_chunk{idx:04d}.csv")
         if not _try_write_csv_arrow(table, out_path):
-            # Fallback: use pandas write (only if Arrow CSV unavailable)
             table.to_pandas(split_blocks=True).to_csv(out_path, index=False)
-        work(f"Chunk {idx} → {out_path}")
+
+        work(chunk=idx, outfile=out_path)
         return out_path
 
-    # PARQUET MODE (default)
-    os.makedirs(_G_out_folder, exist_ok=True)
-    out_path = os.path.join(_G_out_folder, f"sales_chunk{idx:04d}.parquet")
-    t_io0 = time.perf_counter()
+    # ------------------------------------------------------------
+    # PARQUET MODE
+    # ------------------------------------------------------------
+    os.makedirs(State.out_folder, exist_ok=True)
+    out_path = os.path.join(State.out_folder, f"sales_chunk{idx:04d}.parquet")
+
     _stream_write_parquet(
         table,
         out_path,
-        compression=_G_compression,
-        row_group_size=int(_G_row_group_size),
+        compression=State.compression,
+        row_group_size=int(State.row_group_size),
     )
-    # work(f"Chunk {idx} → {out_path}")
+
     work(chunk=idx, outfile=out_path)
     return out_path

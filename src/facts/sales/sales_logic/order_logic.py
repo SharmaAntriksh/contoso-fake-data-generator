@@ -1,5 +1,6 @@
 import numpy as np
-from .globals import _fmt
+from .globals import fmt
+
 
 def build_orders(
     rng, n, skip_cols,
@@ -64,7 +65,7 @@ def build_orders(
         ext_dates = date_pool[rng.choice(_len_date_pool, size=extra, p=date_prob)]
         ext_suffix_int = rng.integers(0, 999999, extra, dtype=np.int64)
 
-        ext_dt_str = _fmt(ext_dates)
+        ext_dt_str = fmt(ext_dates)
         ext_dt_int = ext_dt_str.astype(np.int64)
         ext_ids_int = ext_dt_int * 1_000_000 + ext_suffix_int
 
