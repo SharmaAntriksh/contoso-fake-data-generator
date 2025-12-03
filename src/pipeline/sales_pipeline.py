@@ -61,6 +61,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     t0 = time.time()
 
     generate_sales_fact(
+        cfg,
         parquet_folder=str(parquet_folder),
         out_folder=str(sales_out_folder),             # ✔ Corrected
         total_rows=sales_cfg["total_rows"],

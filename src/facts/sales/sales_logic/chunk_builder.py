@@ -106,7 +106,9 @@ def build_chunk_table(n, seed, no_discount_key=1):
     line_num = orders["line_num"]
     customer_keys = orders["customer_keys"]
     order_dates = orders["order_dates"]
-
+    order_dates[0] = date_pool[0]
+    order_dates[-1] = date_pool[-1]
+    
     qty = np.clip(rng.poisson(3, n) + 1, 1, 10)
 
     # ------------------------------------------------------------

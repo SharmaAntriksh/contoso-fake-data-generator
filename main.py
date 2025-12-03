@@ -8,7 +8,6 @@ from src.pipeline.config_loader import load_config_file, load_config
 
 
 def main():
-    start_time = time.time()
     try:
         # Load config (json/yaml auto-detect)
         raw_cfg = load_config_file("config.yaml")

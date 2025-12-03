@@ -55,11 +55,26 @@ def run_exchange_rates(cfg, parquet_folder: Path):
 
     out_path = parquet_folder / "exchange_rates.parquet"
 
-    if not should_regenerate("exchange_rates", cfg, out_path):
+    fx_cfg = cfg["exchange_rates"]
+    global_defaults = cfg["_defaults"]["dates"]
+
+    # 1) Resolve dates FIRST
+    start_str, end_str = resolve_fx_dates(fx_cfg, global_defaults)
+    start = pd.to_datetime(start_str).date()
+    end   = pd.to_datetime(end_str).date()
+
+    # Build a small, stable config for version checks (order/stable types only)
+    minimal_cfg = {
+        "currencies": fx_cfg.get("currencies"),
+        "base": fx_cfg.get("base_currency"),
+        "use_global_dates": fx_cfg.get("use_global_dates", False),
+        "start": start_str,
+        "end": end_str,
+    }
+
+    if not should_regenerate("exchange_rates", minimal_cfg, out_path):
         skip("Exchange Rates up-to-date; skipping.")
         return
-
-    fx_cfg = cfg["exchange_rates"]
 
     # ---------------------------------------------------------
     # Retrieve TRUE global defaults (not merged)
@@ -100,12 +115,6 @@ def run_exchange_rates(cfg, parquet_folder: Path):
         
         df = df[["Date", "FromCurrency", "ToCurrency", "Rate"]]
         df.to_parquet(out_path, index=False)
-
-    minimal_cfg = {
-        "currencies": fx_cfg["currencies"],
-        "base": fx_cfg["base_currency"],
-        "use_global_dates": fx_cfg["use_global_dates"],
-    }
 
     save_version("exchange_rates", minimal_cfg, out_path)
 

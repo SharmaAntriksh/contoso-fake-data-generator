@@ -118,12 +118,13 @@ def suggest_chunk_size(total_rows, target_workers=None, preferred_chunks_per_wor
 # Main Fact Generation
 # =====================================================================
 def generate_sales_fact(
+    cfg,
     parquet_folder,
     out_folder,
     total_rows,
     chunk_size=2_000_000,
-    start_date="2021-01-01",
-    end_date="2025-12-31",
+    start_date=None,
+    end_date=None,
     row_group_size=2_000_000,
     compression="snappy",
     merge_parquet=False,
@@ -145,8 +146,15 @@ def generate_sales_fact(
     """
     Clean patched version — delta uses ONLY partition writer.
     """
-
-    ensure_dir(out_folder)
+    
+    # Resolve defaults section robustly (support "defaults" or "_defaults")
+    if start_date is None or end_date is None:
+        defaults_section = cfg.get("defaults") or cfg.get("_defaults")
+        if not defaults_section or "dates" not in defaults_section:
+            raise KeyError("Could not find defaults.dates in config. Expected 'defaults' or '_defaults' with a 'dates' mapping.")
+        defaults = defaults_section["dates"]
+        start_date = defaults["start"]
+        end_date = defaults["end"]
 
     # 1) normalize delta_output_folder immediately
     if file_format == "deltaparquet":
