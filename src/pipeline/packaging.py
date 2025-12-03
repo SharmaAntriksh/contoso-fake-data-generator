@@ -40,7 +40,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
         # ---------------------------------------------------------
         packaged_sales_folder = facts_out / "sales"
         if packaged_sales_folder.exists():
-            info("Cleaning packaged facts/sales folder to remove stale parquet files...")
+            # info("Cleaning packaged facts/sales folder to remove stale parquet files...")
             shutil.rmtree(packaged_sales_folder)
 
         # ---------------------------------------------------------

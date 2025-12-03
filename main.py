@@ -1,11 +1,14 @@
 from pathlib import Path
+import time
+
 from src.pipeline.dimensions_orchestrator import generate_dimensions
 from src.pipeline.sales_pipeline import run_sales_pipeline
-from src.utils.logging_utils import info, fail
+from src.utils.logging_utils import info, fail, PIPELINE_START_TIME, fmt_sec
 from src.pipeline.config_loader import load_config_file, load_config
 
 
 def main():
+    start_time = time.time()
     try:
         # Load config (json/yaml auto-detect)
         raw_cfg = load_config_file("config.yaml")
@@ -19,6 +22,10 @@ def main():
         run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg)
 
         info("All pipelines complete.")
+
+        elapsed = time.time() - PIPELINE_START_TIME
+        info(f"Total pipeline time: {fmt_sec(elapsed)}")
+
     except Exception as ex:
         fail(str(ex))
         raise

@@ -101,5 +101,12 @@ def run_exchange_rates(cfg, parquet_folder: Path):
         df = df[["Date", "FromCurrency", "ToCurrency", "Rate"]]
         df.to_parquet(out_path, index=False)
 
-    save_version("exchange_rates", cfg, out_path)
+    minimal_cfg = {
+        "currencies": fx_cfg["currencies"],
+        "base": fx_cfg["base_currency"],
+        "use_global_dates": fx_cfg["use_global_dates"],
+    }
+
+    save_version("exchange_rates", minimal_cfg, out_path)
+
     info(f"Exchange Rates dimension written → {out_path}")

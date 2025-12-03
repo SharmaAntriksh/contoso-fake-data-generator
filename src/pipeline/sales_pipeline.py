@@ -48,7 +48,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
         shutil.rmtree(sales_out_folder, ignore_errors=True)
     sales_out_folder.mkdir(parents=True, exist_ok=True)
 
-    info(f"Resolved sales output folder = {sales_out_folder}")
+    # info(f"Resolved sales output folder = {sales_out_folder}")
 
     # ------------------------------------------------------------
     # Run sales fact builder
@@ -71,7 +71,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
         workers=sales_cfg.get("workers", None),
         partition_enabled=sales_cfg.get("partition_enabled", False),
         partition_cols=sales_cfg.get("partition_cols", ["Year", "Month"]),
-        delta_output_folder=str(sales_out_folder),    # ✔ Also corrected
+        delta_output_folder=str(sales_out_folder),
         skip_order_cols=sales_cfg.get("skip_order_cols", False)
     )
 

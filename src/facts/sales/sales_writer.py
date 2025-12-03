@@ -87,7 +87,7 @@ def write_delta_partitioned(parts_folder, delta_output_folder, partition_cols):
     - Cleans up _tmp_parts after successful write.
     """
 
-    info("[DELTA] Assembling final partitioned dataset...")
+    # info("[DELTA] Assembling final partitioned dataset...")
 
     parts_folder = os.path.abspath(parts_folder)
     delta_output_folder = os.path.abspath(delta_output_folder)
@@ -106,7 +106,7 @@ def write_delta_partitioned(parts_folder, delta_output_folder, partition_cols):
     # Read schema / preview from first part file (NO Arrow dataset)
     first_file = part_files[0]
     schema = pq.ParquetFile(first_file).schema_arrow
-    info(f"[DELTA] dataset schema fields: {schema.names}")
+    # info(f"[DELTA] dataset schema fields: {schema.names}")
 
     if partition_cols is None:
         partition_cols = []
@@ -163,7 +163,7 @@ def write_delta_partitioned(parts_folder, delta_output_folder, partition_cols):
     combined = pa.Table.from_pandas(df_combined, preserve_index=False)
 
     # Final write: single clean delta commit
-    info("[DELTA] Writing real Delta Lake using deltalake.write_deltalake()")
+    # info("[DELTA] Writing real Delta Lake using deltalake.write_deltalake()")
     try:
         write_deltalake(
             str(delta_output_folder),
@@ -174,14 +174,14 @@ def write_delta_partitioned(parts_folder, delta_output_folder, partition_cols):
     except Exception as ex:
         raise RuntimeError(f"Failed to write delta table: {ex}") from ex
 
-    done("[DELTA] Real Delta table written cleanly (sorted partitions).")
+    # done("[DELTA] Real Delta table written cleanly (sorted partitions).")
 
     # Remove temporary parts folder if present (cleanup)
     tmp_parts = os.path.join(os.path.dirname(parts_folder), "_tmp_parts")
     if os.path.exists(tmp_parts):
         try:
             shutil.rmtree(tmp_parts, ignore_errors=True)
-            info("Cleaning delta _tmp_parts")
+            # info("Cleaning delta _tmp_parts")
         except Exception:
             pass
 
