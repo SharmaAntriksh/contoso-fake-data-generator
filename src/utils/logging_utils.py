@@ -75,7 +75,7 @@ def human_duration(seconds):
 
 def _line(level, msg):
     """ Standard log line formatter. """
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ts = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
 
     if ENABLE_COLORS:
         color = COLORS.get(level, "")

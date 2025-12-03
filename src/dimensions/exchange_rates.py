@@ -107,16 +107,41 @@ def run_exchange_rates(cfg, parquet_folder: Path):
     # ---------------------------------------------------------
     # Step 2: Slice master based on final date window
     # ---------------------------------------------------------
-    with stage("Generating Exchange Rates"):
-        df = master_fx[
-            (master_fx["ToCurrency"].isin(currencies)) &
-            (master_fx["FromCurrency"] == base) &
-            (master_fx["Date"] >= start) &
-            (master_fx["Date"] <= end)
-        ].reset_index(drop=True)
+    direct = master_fx[
+        (master_fx["FromCurrency"] == base) &
+        (master_fx["ToCurrency"].isin(currencies))
+    ].copy()
 
-        df = df[["Date", "FromCurrency", "ToCurrency", "Rate"]]
-        df.to_parquet(out_path, index=False)
+    # Find missing currencies that lack From=USD rows
+    missing = set(currencies) - set(direct["ToCurrency"].unique())
+
+    if missing:
+        # Look for inverted rows (target -> base) and invert
+        inv = master_fx[
+            (master_fx["ToCurrency"] == base) &
+            (master_fx["FromCurrency"].isin(missing))
+        ].copy()
+
+        if not inv.empty:
+            inv["Rate"] = 1.0 / inv["Rate"]
+            inv = inv.rename(columns={
+                "FromCurrency": "ToCurrency",
+                "ToCurrency": "FromCurrency"
+            })
+            direct = pd.concat([direct, inv], ignore_index=True)
+
+    # Apply date filter at the end
+    direct["Date"] = pd.to_datetime(direct["Date"], errors="coerce").dt.date
+    df = direct[
+        (direct["Date"] >= start) &
+        (direct["Date"] <= end)
+    ].reset_index(drop=True)
+
+    df = df[["Date", "FromCurrency", "ToCurrency", "Rate"]]
+    df.to_parquet(out_path, index=False)
+
+    if (df["Rate"] <= 0).any():
+        raise ValueError("Invalid FX rate: non-positive values.")
 
     save_version("exchange_rates", minimal_cfg, out_path)
     info(f"Exchange Rates dimension written → {out_path}")

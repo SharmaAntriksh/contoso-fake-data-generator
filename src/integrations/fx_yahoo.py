@@ -31,7 +31,7 @@ def download_history(currency, start_date, end_date):
     # INR uses USDINR=X (invert)
     if currency == "INR":
         ticker = "USDINR=X"
-        invert = True
+        invert = False
     else:
         ticker = f"{currency}{BASE}=X"
         invert = False
