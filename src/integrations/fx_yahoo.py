@@ -3,6 +3,7 @@ import numpy as np
 from pathlib import Path
 import yfinance as yf
 from datetime import timedelta
+
 from src.utils.logging_utils import info
 
 # ---------------------------------------------------------

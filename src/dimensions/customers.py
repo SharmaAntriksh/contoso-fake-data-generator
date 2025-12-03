@@ -8,10 +8,9 @@ import numpy as np
 from pathlib import Path
 from faker import Faker
 
-from src.utils.logging_utils import info, skip, stage
-from src.versioning.version_store import should_regenerate, save_version
+from src.utils import info, skip, stage
+from src.versioning import should_regenerate, save_version
 from src.engine.dimension_loader import load_dimension
-
 
 # ---------------------------------------------------------
 # Helper: Load CSV lists
