@@ -1,64 +1,105 @@
 import pandas as pd
+from pathlib import Path
 
-def generate_exchange_rate_table(
-    start_date,
-    end_date,
-    currencies,
-    base_currency,
-    master_path
-):
+from src.utils.logging_utils import info, skip, stage
+from src.pipeline.versioning import should_regenerate, save_version
+from src.services.fx_yahoo import build_or_update_fx
+
+
+# ---------------------------------------------------------
+# Resolve FX date range (corrected)
+# ---------------------------------------------------------
+
+def resolve_fx_dates(fx_cfg, global_defaults):
     """
-    Robust slicer for the master exchange_rates parquet.
-    Ensures Date is normalized, To/FromCurrency exist, and returns the requested slice.
+    Determine the FX effective date range.
+
+    Correct rules:
+    - If use_global_dates = true → use TRUE global defaults (cfg["_defaults"])
+      regardless of overrides or section dates.
+    - If use_global_dates = false → use merged section defaults, then apply override.
     """
 
-    # read
-    df = pd.read_parquet(master_path)
+    # -----------------------------------------------------
+    # Case 1: global dates explicitly requested
+    # -----------------------------------------------------
+    if fx_cfg.get("use_global_dates", False):
+        return global_defaults["start"], global_defaults["end"]
 
-    # basic sanity checks & normalization
-    if "Date" not in df.columns:
-        raise RuntimeError(f"master file {master_path} missing Date column")
-    if "FromCurrency" not in df.columns or "ToCurrency" not in df.columns:
-        raise RuntimeError(f"master file {master_path} missing currency columns")
+    # -----------------------------------------------------
+    # Case 2: section-level defaults (already merged)
+    # -----------------------------------------------------
+    base_dates = fx_cfg.get("dates", {})
+    start = base_dates.get("start")
+    end   = base_dates.get("end")
 
-    # normalize Date column to pandas datetime (ensures no Timestamp/date mix)
-    df["Date"] = pd.to_datetime(df["Date"])
+    # -----------------------------------------------------
+    # Apply overrides
+    # -----------------------------------------------------
+    override_dates = fx_cfg.get("override", {}).get("dates", {})
+    start = override_dates.get("start", start)
+    end   = override_dates.get("end", end)
 
-    # Normalize string columns (strip, upper) — helps avoid accidental mismatches
-    df["FromCurrency"] = df["FromCurrency"].astype(str).str.strip().str.upper()
-    df["ToCurrency"]   = df["ToCurrency"].astype(str).str.strip().str.upper()
+    return start, end
 
-    # Normalize inputs
-    start = pd.to_datetime(start_date)
-    end   = pd.to_datetime(end_date)
-    base_currency = str(base_currency).upper()
-    currencies = [str(c).upper() for c in currencies]
 
-    # Build mask
-    mask = (
-        (df["Date"] >= start) &
-        (df["Date"] <= end) &
-        (df["FromCurrency"] == base_currency) &
-        (df["ToCurrency"].isin(currencies))
-    )
+# ---------------------------------------------------------
+# Main pipeline wrapper
+# ---------------------------------------------------------
 
-    result = df.loc[mask].copy()
+def run_exchange_rates(cfg, parquet_folder: Path):
+    """
+    Generate Exchange Rates dimension using Yahoo Finance.
+    Corrected to respect use_global_dates flag.
+    """
 
-    # If empty, give a helpful diagnostic sample
-    if result.empty:
-        # capture small samples to help debugging
-        sample_counts = df["ToCurrency"].value_counts().head(10).to_dict()
-        raise RuntimeError(
-            "Exchange rate slice is empty. Diagnostics:\n"
-            f"master total rows={len(df)}, sample ToCurrency counts={sample_counts}\n"
-            f"Requested base_currency={base_currency}, currencies={currencies}, start={start_date}, end={end_date}\n"
-            f"Master path: {master_path}"
-        )
+    out_path = parquet_folder / "exchange_rates.parquet"
 
-    # ensure ExchangeRate numeric and rounded to 6 decimals
-    result["ExchangeRate"] = pd.to_numeric(result["ExchangeRate"], errors="coerce").round(6)
+    if not should_regenerate("exchange_rates", cfg, out_path):
+        skip("Exchange Rates up-to-date; skipping.")
+        return
 
-    # final sort
-    result.sort_values(["Date", "ToCurrency"], inplace=True)
-    result.reset_index(drop=True, inplace=True)
-    return result
+    fx_cfg = cfg["exchange_rates"]
+
+    # ---------------------------------------------------------
+    # Retrieve TRUE global defaults (not merged)
+    # ---------------------------------------------------------
+    global_defaults = cfg["_defaults"]["dates"]
+
+    # ---------------------------------------------------------
+    # Resolve effective date range
+    # ---------------------------------------------------------
+    start_str, end_str = resolve_fx_dates(fx_cfg, global_defaults)
+
+    start = pd.to_datetime(start_str).date()
+    end   = pd.to_datetime(end_str).date()
+
+    currencies = fx_cfg["currencies"]
+    base       = fx_cfg["base_currency"]
+    master     = fx_cfg["master_file"]
+
+    # ---------------------------------------------------------
+    # Step 1: Update or build master FX file from Yahoo Finance
+    # ---------------------------------------------------------
+    with stage("Updating FX Master"):
+        master_fx = build_or_update_fx(start, end, master, currencies=currencies)
+
+    # Ensure Date is normalized before slicing
+    master_fx["Date"] = pd.to_datetime(master_fx["Date"], errors = 'coerce', format = '%Y-%b-%D').dt.date
+
+    # ---------------------------------------------------------
+    # Step 2: Slice master FX file based on resolved dates
+    # ---------------------------------------------------------
+    with stage("Generating Exchange Rates"):
+        df = master_fx[
+            (master_fx["ToCurrency"].isin(currencies)) &
+            (master_fx["FromCurrency"] == base) &
+            (master_fx["Date"] >= pd.to_datetime(start)) &
+            (master_fx["Date"] <= pd.to_datetime(end))
+        ].reset_index(drop=True)
+        
+        df = df[["Date", "FromCurrency", "ToCurrency", "Rate"]]
+        df.to_parquet(out_path, index=False)
+
+    save_version("exchange_rates", cfg, out_path)
+    info(f"Exchange Rates dimension written → {out_path}")

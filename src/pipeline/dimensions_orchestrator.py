@@ -1,292 +1,47 @@
-import time
+# ---------------------------------------------------------
+#  DIMENSIONS ORCHESTRATOR (CLEAN + MINIMAL)
+# ---------------------------------------------------------
+
 from pathlib import Path
-from datetime import datetime
-import os
-import pandas as pd
 
-from src.pipeline.dimensions.customers import generate_synthetic_customers
-from src.pipeline.dimensions.promotions import generate_promotions_catalog
-from src.pipeline.dimensions.stores import generate_store_table
-from src.pipeline.dimensions.dates import generate_date_table
-from src.pipeline.dimensions.currency import generate_currency_dimension
-from src.pipeline.dimensions.exchange_rates import generate_exchange_rate_table
-from src.pipeline.dimensions.geography_builder import build_dim_geography
-
-from src.pipeline.versioning import should_regenerate, save_version
-from src.utils.logging_utils import stage, info, skip, done
-
-from src.services.fx_yahoo import build_or_update_fx
-from src.facts.sales.sales_writer import write_delta_partitioned
+from src.pipeline.dimensions.geography import run_geography
+from src.pipeline.dimensions.customers import run_customers
+from src.pipeline.dimensions.stores import run_stores
+from src.pipeline.dimensions.promotions import run_promotions
+from src.pipeline.dimensions.dates import run_dates
+from src.pipeline.dimensions.currency import run_currency
+from src.pipeline.dimensions.exchange_rates import run_exchange_rates
 
 
-def expand_date_ranges(ranges):
+def generate_dimensions(cfg: dict, parquet_dims_folder: Path):
     """
-    Convert date_ranges into precise per-year windows:
-    [
-        {2023: (2023-04-01, 2023-12-31)},
-        {2024: (2024-01-01, 2024-02-01)},
-    ]
+    Orchestrates dimension generation in correct dependency order.
+    Each dimension handles its own regeneration/versioning logic.
+    
+    Dependency Order:
+    - Geography → Customers, Stores
+    - Promotions → no dependency
+    - Dates → required by Sales
+    - Currency + FX → independent but FX uses master file
     """
-    year_windows = {}
 
-    for r in ranges:
-        s = datetime.fromisoformat(r["start"])
-        e = datetime.fromisoformat(r["end"])
+    # 1️⃣ Geography (root)
+    run_geography(cfg, parquet_dims_folder)
 
-        for y in range(s.year, e.year + 1):
+    # 2️⃣ Customers (depends on geography)
+    run_customers(cfg, parquet_dims_folder)
 
-            # full default year range
-            y_start = datetime(y, 1, 1)
-            y_end   = datetime(y, 12, 31)
+    # 3️⃣ Stores (depends on geography)
+    run_stores(cfg, parquet_dims_folder)
 
-            # clamp to actual date_window
-            if y == s.year:
-                y_start = s
-            if y == e.year:
-                y_end = e
+    # 4️⃣ Promotions (independent)
+    run_promotions(cfg, parquet_dims_folder)
 
-            year_windows[y] = (y_start, y_end)
+    # 5️⃣ Dates (independent; required for sales)
+    run_dates(cfg, parquet_dims_folder)
 
-    return year_windows
+    # 6️⃣ Currency (independent)
+    run_currency(cfg, parquet_dims_folder)
 
-
-def generate_dimensions(cfg, parquet_dims: Path):
-
-    def out(name):
-        return parquet_dims / f"{name}.parquet"
-
-    def changed(name, section):
-        return should_regenerate(name, section, out(name))
-
-    # --------------------------------------------------
-    # Geography (root)
-    # --------------------------------------------------
-    if changed("geography", cfg["geography"]):
-        with stage("Generating Geography"):
-            build_dim_geography(cfg)
-            save_version("geography", cfg["geography"])
-            info(f"Saved geography → {out('geography')}")
-    else:
-        skip("Geography up-to-date; skipping regeneration")
-
-    # --------------------------------------------------
-    # Customers (depends on geography)
-    # --------------------------------------------------
-    customer_need = changed("customers", cfg["customers"]) or changed("geography", cfg["geography"])
-
-    if customer_need:
-        info("Dependency triggered: Customers will regenerate.")
-        with stage("Generating Customers"):
-            df = generate_synthetic_customers(cfg)
-            df.to_parquet(out("customers"), index=False)
-            save_version("customers", cfg["customers"])
-            info(f"Saved customers → {out('customers')}")
-    else:
-        skip("Customers up-to-date; skipping regeneration")
-
-    # --------------------------------------------------
-    # Promotions (independent)
-    # --------------------------------------------------
-    if changed("promotions", cfg["promotions"]):
-        with stage("Generating Promotions"):
-
-            promo_cfg = cfg["promotions"]
-
-            # 1) Use explicit promo date_ranges if provided
-            ranges = promo_cfg.get("date_ranges", []) or []
-
-            if ranges:
-                # expand date ranges → precise year windows (existing helper)
-                year_windows = expand_date_ranges(ranges)
-                years = sorted(year_windows.keys())
-
-            else:
-                # Use global defaults.dates
-                promo_dates = cfg["promotions"]["dates"]
-                start = promo_dates["start"]
-                end = promo_dates["end"]
-
-                # Apply override if present
-                override_dates = promo_cfg.get("override", {}).get("dates", {})
-                start = override_dates.get("start", start)
-                end = override_dates.get("end", end)
-
-                # Convert to year-based windows
-                start_year = int(start[:4])
-                end_year = int(end[:4])
-
-                year_windows = {}
-                for y in range(start_year, end_year + 1):
-                    y_start = f"{y}-01-01"
-                    y_end = f"{y}-12-31"
-
-                    # Clamp window to actual global override start/end
-                    if y == start_year:
-                        y_start = start
-                    if y == end_year:
-                        y_end = end
-
-                    # convert YYYY-MM-DD → datetime
-                    ws = datetime.fromisoformat(y_start)
-                    we = datetime.fromisoformat(y_end)
-
-                    year_windows[y] = (ws, we)
-
-                years = list(year_windows.keys())
-
-
-            df = generate_promotions_catalog(
-                years=years,
-                year_windows=year_windows,
-                num_seasonal=promo_cfg["num_seasonal"],
-                num_clearance=promo_cfg["num_clearance"],
-                num_limited=promo_cfg["num_limited"],
-                seed = promo_cfg["seed"],
-            )
-
-            df.to_parquet(out("promotions"), index=False)
-            save_version("promotions", promo_cfg)
-            info(f"Saved promotions → {out('promotions')}")
-
-    else:
-        skip("Promotions up-to-date; skipping regeneration")
-
-
-
-    # --------------------------------------------------
-    # Stores (depends on geography)
-    # --------------------------------------------------
-    store_need = changed("stores", cfg["stores"]) or changed("geography", cfg["geography"])
-
-    if store_need:
-        info("Dependency triggered: Stores will regenerate.")
-        with stage("Generating Stores"):
-
-            seed = cfg["stores"]["seed"]
-
-            df = generate_store_table(
-                geography_parquet_path=os.path.join(parquet_dims, "geography.parquet"),
-                num_stores=cfg["stores"]["num_stores"],
-                opening_start=cfg["stores"]["opening"]["start"],
-                opening_end=cfg["stores"]["opening"]["end"],
-                closing_end=cfg["stores"]["closing_end"],
-                seed=seed,
-            )
-            df.to_parquet(out("stores"), index=False)
-            save_version("stores", cfg["stores"])
-            info(f"Saved stores → {out('stores')}")
-
-    # --------------------------------------------------
-    # Dates
-    # --------------------------------------------------
-    if changed("dates", cfg["dates"]):
-        with stage("Generating Dates"):
-            start = cfg["dates"]["dates"]["start"]
-            end   = cfg["dates"]["dates"]["end"]
-
-            df = generate_date_table(start, end, cfg["dates"]["fiscal_month_offset"])
-            df.to_parquet(out("dates"), index=False)
-            save_version("dates", cfg["dates"])
-            info(f"Saved dates → {out('dates')}")
-    else:
-        skip("Dates up-to-date; skipping regeneration")
-
-
-    # --------------------------------------------------
-    # Currency
-    # --------------------------------------------------
-    if changed("currency", cfg["exchange_rates"]):
-        with stage("Generating Currency Dimension"):
-            df = generate_currency_dimension(cfg["exchange_rates"]["currencies"])
-            df.to_parquet(out("currency"), index=False)
-            save_version("currency", cfg["exchange_rates"])
-            info(f"Saved currency → {out('currency')}")
-    else:
-        skip("Currency dimension up-to-date; skipping regeneration")
-
-    # -----------------------------
-    # Exchange Rates (use explicit FX dates if present)
-    # -----------------------------
-    from pathlib import Path
-    import pandas as pd
-
-    # -----------------------------
-    # FX Start/End Priority Logic
-    # -----------------------------
-
-    # Defaults
-    defaults_start = pd.to_datetime(cfg["exchange_rates"]["dates"]["start"]).date()
-    defaults_end   = pd.to_datetime(cfg["exchange_rates"]["dates"]["end"]).date()
-
-    # Optional FX-specific start date
-    fx_dates_cfg = cfg.get("exchange_rates", {}).get("dates", {}) or {}
-    fx_start_cfg = fx_dates_cfg.get("start", None)
-
-    if fx_start_cfg:
-        fx_start_cfg = pd.to_datetime(fx_start_cfg).date()
-        fx_start = min(defaults_start, fx_start_cfg)   # priority rule
-    else:
-        fx_start = defaults_start
-
-    # End date ALWAYS from defaults
-    fx_end = defaults_end
-
-    # normalize to pandas timestamps / date objects
-    fx_start = pd.to_datetime(fx_start).date()
-    fx_end   = pd.to_datetime(fx_end).date()
-
-    # master path (full history)
-    master_fx_path = parquet_dims / "exchange_rates.parquet"
-
-    # determine if regeneration is needed (Option A behavior)
-    if master_fx_path.exists():
-        fx_df = pd.read_parquet(master_fx_path)
-        fx_df["Date"] = pd.to_datetime(fx_df["Date"])
-        last_fx_date = fx_df["Date"].max().date()
-    else:
-        last_fx_date = None
-
-    # regenerate when missing or end not covered
-    fx_need = (last_fx_date is None) or (last_fx_date < fx_end)
-
-    if fx_need:
-        info("Dependency triggered: Exchange Rates will regenerate.")
-        with stage("Generating Exchange Rates"):
-            # build or extend full history up to fx_end
-            build_or_update_fx(
-                start_date=fx_start.isoformat(),   # pass ISO string or date
-                end_date=fx_end.isoformat(),
-                out_path=parquet_dims / "exchange_rates.parquet"
-            )
-
-            # After build_or_update_fx returns, ensure we forward-fill missing calendar days
-            # (if you already implemented ffill in fx_yahoo.py this will be redundant but safe)
-            fx_full = pd.read_parquet(parquet_dims / "exchange_rates.parquet")
-            fx_full["Date"] = pd.to_datetime(fx_full["Date"])
-
-            # create full calendar and ffill per ToCurrency
-            full_range = pd.date_range(start=fx_full["Date"].min(), end=fx_full["Date"].max(), freq="D")
-            filled = []
-            for cur in sorted(fx_full["ToCurrency"].unique()):
-                sub = fx_full[fx_full["ToCurrency"] == cur].set_index("Date").sort_index()
-                sub = sub.reindex(full_range)
-                sub["FromCurrency"] = cfg["exchange_rates"].get("base_currency", "USD")
-                sub["ToCurrency"] = cur
-                # forward fill ExchangeRate; if leading NaNs remain, backfill (use last known before start)
-                sub["ExchangeRate"] = sub["ExchangeRate"].ffill().bfill()
-                filled.append(sub.reset_index().rename(columns={"index": "Date"}))
-            fx_filled = pd.concat(filled, ignore_index=True)
-            fx_filled.sort_values(["Date", "ToCurrency"], inplace=True)
-
-            # save final master (overwrite)
-            fx_filled.to_parquet(parquet_dims / "exchange_rates.parquet", index=False)
-
-            # copy to final exchange_rates.parquet (no slicing)
-            final_path = parquet_dims / "exchange_rates.parquet"
-            Path(final_path).write_bytes(Path(parquet_dims / "exchange_rates.parquet").read_bytes())
-
-            save_version("exchange_rates", cfg["exchange_rates"])
-            info(f"Saved exchange_rates → {final_path}")
-
-    else:
-        skip("Exchange Rates up-to-date; skipping regeneration")
+    # 7️⃣ Exchange Rates (independent)
+    run_exchange_rates(cfg, parquet_dims_folder)

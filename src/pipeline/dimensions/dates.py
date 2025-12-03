@@ -1,8 +1,20 @@
+# ---------------------------------------------------------
+#  DATES DIMENSION (PIPELINE READY)
+# ---------------------------------------------------------
+
 import pandas as pd
 import numpy as np
 import re
 from datetime import datetime
+from pathlib import Path
 
+from src.utils.logging_utils import info, fail, skip, stage
+from src.pipeline.versioning import should_regenerate, save_version
+
+
+# ---------------------------------------------------------
+# ORIGINAL GENERATOR (unchanged)
+# ---------------------------------------------------------
 
 def generate_date_table(start_date, end_date, first_fy_month):
     """
@@ -50,12 +62,10 @@ def generate_date_table(start_date, end_date, first_fy_month):
     df["Is Weekend"] = df["Day Of Week"].isin([0, 6]).astype(int)
     df["Is Business Day"] = (df["Is Weekend"] == 0).astype(int)
 
-    # ISO week/year
     iso = df["Date"].dt.isocalendar()
     df["Week Of Year ISO"] = iso.week.astype(int)
     df["ISO Year"] = iso.year.astype(int)
 
-    # Calendar boundaries
     df["Quarter Start Date"] = pd.to_datetime(
         df["Year"].astype(str)
         + "-"
@@ -75,7 +85,6 @@ def generate_date_table(start_date, end_date, first_fy_month):
     df["Month Year Number"] = df["Year"] * 100 + df["Month"]
     df["Quarter Year"] = "Q" + df["Quarter"].astype(str) + " " + df["Year"].astype(str)
 
-    # Week of month / week boundaries
     df["Week Of Month"] = ((df["Day"] - 1) // 7 + 1).astype(int)
     df["Week Start Date"] = df["Date"] - pd.to_timedelta(df["Date"].dt.weekday, unit="D")
     df["Week End Date"] = df["Week Start Date"] + pd.Timedelta(days=6)
@@ -85,7 +94,6 @@ def generate_date_table(start_date, end_date, first_fy_month):
     # ============================================================
     biz = df.loc[df["Is Business Day"] == 1, ["Date"]].rename(columns={"Date": "BizDate"})
 
-    # Next business day
     df = pd.merge_asof(
         df.sort_values("Date"),
         biz.assign(NextBD=biz["BizDate"]),
@@ -95,7 +103,6 @@ def generate_date_table(start_date, end_date, first_fy_month):
     ).drop(columns=["BizDate"])
     df.rename(columns={"NextBD": "Next Business Day"}, inplace=True)
 
-    # Previous business day
     biz_sorted = biz.sort_values("BizDate")
     df = pd.merge_asof(
         df,
@@ -191,50 +198,77 @@ def generate_date_table(start_date, end_date, first_fy_month):
     df.columns = [camel_to_title(col) for col in df.columns]
     df.rename(columns={"Iso Year": "ISO Year"}, inplace=True)
 
-    # convert datetimes → date
     date_cols = df.select_dtypes(include="datetime").columns
     df[date_cols] = df[date_cols].apply(lambda col: pd.to_datetime(col).dt.date)
 
     # ============================================================
-    # COLUMN ORDER (unchanged from your version)
+    # COLUMN ORDER (unchanged)
     # ============================================================
     df = df[
         [
             "Date","Date Key",
-
             "Year","Is Year Start","Is Year End",
-
             "Quarter","Quarter Start Date","Quarter End Date",
             "Is Quarter Start","Is Quarter End",
             "Quarter Year",
-
             "Month","Month Name","Month Short",
             "Month Start Date","Month End Date",
             "Month Year","Month Year Number",
             "Is Month Start","Is Month End",
-
             "Week Of Year ISO","ISO Year","Week Of Month",
             "Week Start Date","Week End Date",
-
             "Day","Day Name","Day Short","Day Of Year","Day Of Week",
             "Is Weekend","Is Business Day",
             "Next Business Day","Previous Business Day",
-
             "Fiscal Year Start Year","Fiscal Month Number","Fiscal Quarter Number",
             "Fiscal Quarter Name","Fiscal Year Bin",
             "Fiscal Year Month Number","Fiscal Year Quarter Number",
-
             "Fiscal Year Start Date","Fiscal Year End Date",
             "Fiscal Quarter Start Date","Fiscal Quarter End Date",
-
             "Is Fiscal Year Start","Is Fiscal Year End",
             "Is Fiscal Quarter Start","Is Fiscal Quarter End",
-
             "Fiscal Year","Fiscal Year Label",
-
             "Is Today","Is Current Year","Is Current Month",
             "Is Current Quarter","Current Day Offset"
         ]
     ]
 
     return df
+
+
+# ---------------------------------------------------------
+# PIPELINE WRAPPER
+# ---------------------------------------------------------
+
+def run_dates(cfg, parquet_folder: Path):
+    """
+    Pipeline wrapper for Date dimension.
+    Handles:
+    - version checks
+    - logging
+    - writing parquet
+    - version saving
+    """
+
+    out_path = parquet_folder / "dates.parquet"
+
+    if not should_regenerate("dates", cfg, out_path):
+        skip("Dates up-to-date; skipping.")
+        return
+
+    dates_cfg = cfg["dates"]
+
+    start_date = dates_cfg.get("start_date")
+    end_date = dates_cfg.get("end_date")
+    fiscal_start_month = dates_cfg.get("fiscal_start_month", 5)
+
+    with stage("Generating Dates"):
+        df = generate_date_table(
+            start_date=start_date,
+            end_date=end_date,
+            first_fy_month=fiscal_start_month
+        )
+        df.to_parquet(out_path, index=False)
+
+    save_version("dates", cfg, out_path)
+    info(f"Dates dimension written → {out_path}")

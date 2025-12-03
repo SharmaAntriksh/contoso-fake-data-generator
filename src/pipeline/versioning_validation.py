@@ -13,7 +13,7 @@ def ensure_dimension_version_exists(name: str, parquet_path: Path, cfg_section):
 
     if parquet_path.exists() and not vpath.exists():
         info(f"[versioning] Creating version metadata for '{name}'.")
-        save_version(name, cfg_section)
+        save_version(name, cfg_section, parquet_path)
 
 
 def validate_all_dimensions(cfg: dict, parquet_dims: Path, dimension_names):

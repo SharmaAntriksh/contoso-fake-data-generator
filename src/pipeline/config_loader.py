@@ -32,11 +32,8 @@ def load_config_file(path):
 
 def load_config(cfg):
     """
-    Returns a dict of fully-resolved module configs:
-        resolved["sales"]
-        resolved["promotions"]
-        resolved["customers"]
-        etc.
+    Returns a dict of fully-resolved module configs.
+    Also injects real global defaults under _defaults.
     """
     resolved = {}
     defaults = cfg.get("defaults", {})
@@ -45,12 +42,15 @@ def load_config(cfg):
         if section_name == "defaults":
             continue
 
-        # Skip non-dict values (like final_output_folder)
+        # Skip non-dict values (simple string fields)
         if not isinstance(section, dict):
             resolved[section_name] = section
             continue
 
         resolved[section_name] = resolve_section(cfg, section_name, defaults)
+
+    # FIX: expose true defaults so modules can use them
+    resolved["_defaults"] = defaults
 
     return resolved
 
@@ -58,30 +58,31 @@ def load_config(cfg):
 def resolve_section(cfg, section_name, defaults):
     """
     Merge: defaults → section → override
-    + special logic for promotions.date_ranges
+    Special behavior for promotions.
+    For exchange_rates, skip override dates if use_global_dates = true.
     """
     section = copy.deepcopy(cfg.get(section_name, {}))
     override = section.pop("override", {})
 
-    # -----------------------------------------
+    # ------------------------------------------------------------------
     # Base structure
-    # -----------------------------------------
+    # ------------------------------------------------------------------
     out = {
         "seed": defaults.get("seed"),
         "dates": copy.deepcopy(defaults.get("dates", {})),
         "paths": copy.deepcopy(defaults.get("paths", {}))
     }
 
-    # -----------------------------------------
-    # Merge module-level fields (non override)
-    # -----------------------------------------
+    # ------------------------------------------------------------------
+    # Merge module-level fields (except reserved keys)
+    # ------------------------------------------------------------------
     for key, val in section.items():
-        if key not in ("dates", "paths"):  # reserved keys
+        if key not in ("dates", "paths"):  # reserved
             out[key] = val
 
-    # -----------------------------------------
-    # SPECIAL: PROMOTIONS DATE RANGES
-    # -----------------------------------------
+    # ------------------------------------------------------------------
+    # Promotions date_ranges special case
+    # ------------------------------------------------------------------
     if section_name == "promotions":
         date_ranges = section.get("date_ranges", [])
         if date_ranges:
@@ -92,28 +93,28 @@ def resolve_section(cfg, section_name, defaults):
                 "end": out["dates"]["end"]
             }]
 
-    # -----------------------------------------
-    # Apply override: dates
-    # -----------------------------------------
-    if "dates" in override and isinstance(override["dates"], dict):
-        out["dates"] = {
-            **out["dates"],
-            **override["dates"]
-        }
+    # ------------------------------------------------------------------
+    # Apply override: DATES
+    # ------------------------------------------------------------------
+    use_global = out.get("use_global_dates", False) if section_name == "exchange_rates" else False
 
-    # -----------------------------------------
-    # Apply override: seed
-    # -----------------------------------------
+    if "dates" in override and isinstance(override["dates"], dict):
+        if section_name == "exchange_rates" and use_global:
+            # FIX: ignore override dates entirely
+            pass
+        else:
+            out["dates"] = {**out["dates"], **override["dates"]}
+
+    # ------------------------------------------------------------------
+    # Apply override: SEED
+    # ------------------------------------------------------------------
     if override.get("seed") is not None:
         out["seed"] = override["seed"]
 
-    # -----------------------------------------
-    # Apply override: paths
-    # -----------------------------------------
+    # ------------------------------------------------------------------
+    # Apply override: PATHS
+    # ------------------------------------------------------------------
     if "paths" in override and isinstance(override["paths"], dict):
-        out["paths"] = {
-            **out["paths"],
-            **override["paths"]
-        }
+        out["paths"] = {**out["paths"], **override["paths"]}
 
     return out

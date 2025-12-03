@@ -1,6 +1,19 @@
+# ---------------------------------------------------------
+#  STORES DIMENSION (PIPELINE READY)
+# ---------------------------------------------------------
+
 import pandas as pd
 import numpy as np
+from pathlib import Path
 
+from src.utils.logging_utils import info, fail, skip, stage
+from src.pipeline.versioning import should_regenerate, save_version
+from src.pipeline.dimension_loader import load_dimension
+
+
+# ---------------------------------------------------------
+# ORIGINAL GENERATOR  (unchanged) :contentReference[oaicite:0]{index=0}
+# ---------------------------------------------------------
 
 def generate_store_table(
     geography_parquet_path="./data/parquet_dims/geography.parquet",
@@ -87,12 +100,10 @@ def generate_store_table(
         lambda x: f"(555) {x % 900 + 100}-{x % 10000:04d}"
     )
 
-    # Description
     df["StoreDescription"] = (
         df["StoreType"] + " located in GeographyKey " + df["GeographyKey"].astype(str)
     )
 
-    # Closing reason
     df["CloseReason"] = np.where(
         df["Status"] == "Closed",
         rng.choice(close_reasons, size=num_stores),
@@ -100,3 +111,43 @@ def generate_store_table(
     )
 
     return df
+
+
+# ---------------------------------------------------------
+#  PIPELINE ENTRYPOINT
+# ---------------------------------------------------------
+
+def run_stores(cfg, parquet_folder: Path):
+    """
+    Pipeline wrapper for store dimension generation.
+    Handles:
+    - version checks
+    - logging
+    - geography dim loading
+    - writing parquet
+    - version saving
+    """
+
+    out_path = parquet_folder / "stores.parquet"
+
+    if not should_regenerate("stores", cfg, out_path):
+        skip("Stores up-to-date; skipping.")
+        return
+
+    store_cfg = cfg["stores"]
+    geo_path = parquet_folder / "geography.parquet"
+
+    with stage("Generating Stores"):
+        df = generate_store_table(
+            geography_parquet_path=geo_path,
+            num_stores=store_cfg.get("total_stores", 200),
+            opening_start=store_cfg.get("opening_start", "2018-01-01"),
+            opening_end=store_cfg.get("opening_end", "2023-01-31"),
+            closing_end=store_cfg.get("closing_end", "2025-12-31"),
+            seed=store_cfg.get("seed", 42),
+        )
+
+        df.to_parquet(out_path, index=False)
+
+    save_version("stores", cfg, out_path)
+    info(f"Stores dimension written → {out_path}")

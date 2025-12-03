@@ -1,7 +1,19 @@
+# ---------------------------------------------------------
+#  PROMOTIONS DIMENSION (PIPELINE READY)
+# ---------------------------------------------------------
+
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+from pathlib import Path
 
+from src.utils.logging_utils import info, fail, skip, stage
+from src.pipeline.versioning import should_regenerate, save_version
+
+
+# ---------------------------------------------------------
+#  ORIGINAL PROMOTION GENERATOR (unchanged)  :contentReference[oaicite:0]{index=0}
+# ---------------------------------------------------------
 
 def generate_promotions_catalog(
     years,
@@ -16,7 +28,6 @@ def generate_promotions_catalog(
     `years` = list of valid years
     `year_windows` = { year: (start_dt, end_dt) }
     """
-
     if not years:
         raise ValueError("Promotions: No years provided.")
 
@@ -46,7 +57,6 @@ def generate_promotions_catalog(
         m, d = map(int, mmdd.split("-"))
         return datetime(y, m, d)
 
-    # templates unchanged
     HOLIDAYS = [
         ("Black Friday",   "11-25", "11-30", 3, 10, 0.20, 0.70),
         ("Cyber Monday",   "11-28", "12-02", 2, 6,  0.15, 0.50),
@@ -77,9 +87,6 @@ def generate_promotions_catalog(
         "Mid-Season Discount",
     ]
 
-    # ======================================================
-    # 1. HOLIDAY PROMOS (precision clamped)
-    # ======================================================
     holiday = []
 
     for y in years:
@@ -115,9 +122,7 @@ def generate_promotions_catalog(
                 "EndDate": pd.Timestamp(p_end),
             })
 
-    # ======================================================
-    # 2. SEASONAL, CLEARANCE, LIMITED — all clamped
-    # ======================================================
+    # seasonal, clearance, limited
     def random_window(y, min_days, max_days):
         start = datetime(y, np.random.randint(1, 13), np.random.randint(1, 29))
         end   = start + timedelta(days=np.random.randint(min_days, max_days))
@@ -125,7 +130,6 @@ def generate_promotions_catalog(
 
     seasonal, clearance, limited = [], [], []
 
-    # seasonal
     for _ in range(num_seasonal):
         y = np.random.choice(years)
         stype = np.random.choice(SEASONAL_NAMES)
@@ -142,7 +146,6 @@ def generate_promotions_catalog(
                 "PromotionCategory": np.random.choice(CATEGORIES),
             })
 
-    # clearance
     for _ in range(num_clearance):
         y = np.random.choice(years)
         s, e = random_window(y, 3, 25)
@@ -158,7 +161,6 @@ def generate_promotions_catalog(
                 "PromotionCategory": np.random.choice(CATEGORIES),
             })
 
-    # limited
     for _ in range(num_limited):
         y = np.random.choice(years)
         s, e = random_window(y, 1, 15)
@@ -174,10 +176,8 @@ def generate_promotions_catalog(
                 "PromotionCategory": np.random.choice(CATEGORIES),
             })
 
-    # combine
     df = pd.DataFrame(holiday + seasonal + clearance + limited)
 
-    # naming, numbering (unchanged)
     numbered = []
     non_holiday = df[df["TypeGroup"] != "Holiday"]
 
@@ -197,20 +197,19 @@ def generate_promotions_catalog(
 
     final = pd.concat([holiday_df] + numbered, ignore_index=True)
 
-    # add no-discount promo
     final = pd.concat([
         final,
         pd.DataFrame([{
             "TypeGroup": "NoDiscount",
             "SeasonType": "NoDiscount",
-            "Year": start_year,
+            "Year": min(years),
             "PromotionName": "No Discount",
             "PromotionDescription": "No Discount",
             "DiscountPct": 0.00,
-            "PromotionType": PROMO_TYPES["NoDiscount"],
+            "PromotionType": "No Discount",
             "PromotionCategory": "No Discount",
-            "StartDate": pd.Timestamp(year_windows[start_year][0]),
-            "EndDate": pd.Timestamp(year_windows[end_year][1]),
+            "StartDate": pd.Timestamp(year_windows[min(years)][0]),
+            "EndDate": pd.Timestamp(year_windows[max(years)][1]),
             "LocalIndex": None,
         }])
     ], ignore_index=True)
@@ -232,3 +231,66 @@ def generate_promotions_catalog(
             "EndDate"
         ]
     ]
+
+
+# ---------------------------------------------------------
+#  PIPELINE ENTRYPOINT
+# ---------------------------------------------------------
+
+def run_promotions(cfg, parquet_folder: Path):
+    """
+    Wrapper around promotion generation.
+    - extracts config values
+    - performs regeneration logic
+    - writes parquet
+    - saves version
+    """
+    out_path = parquet_folder / "promotions.parquet"
+
+    if not should_regenerate("promotions", cfg, out_path):
+        skip("Promotions up-to-date; skipping.")
+        return
+
+    promo_cfg = cfg["promotions"]
+
+    # ---------------------------------------------------------
+    # Determine promo year range from defaults (merged into section)
+    # ---------------------------------------------------------
+    default_dates = promo_cfg["dates"]
+
+    start = pd.to_datetime(default_dates["start"])
+    end   = pd.to_datetime(default_dates["end"])
+
+    years = list(range(start.year, end.year + 1))
+
+    # ---------------------------------------------------------
+    # Build synthetic yearly windows (no config date_windows required)
+    # ---------------------------------------------------------
+    windows = {}
+
+    for y in years:
+        year_start = pd.Timestamp(f"{y}-01-01")
+        year_end   = pd.Timestamp(f"{y}-12-31")
+
+        # clamp inside global default date range
+        year_start = max(year_start, start)
+        year_end   = min(year_end, end)
+
+        windows[y] = (year_start, year_end)
+
+    # ---------------------------------------------------------
+    # Generate promotions using computed windows
+    # ---------------------------------------------------------
+    with stage("Generating Promotions"):
+        df = generate_promotions_catalog(
+            years=years,
+            year_windows=windows,
+            num_seasonal=promo_cfg.get("num_seasonal", 20),
+            num_clearance=promo_cfg.get("num_clearance", 8),
+            num_limited=promo_cfg.get("num_limited", 12),
+            seed=promo_cfg.get("seed", 42)
+        )
+        df.to_parquet(out_path, index=False)
+
+    save_version("promotions", cfg, out_path)
+    info(f"Promotions dimension written → {out_path}")

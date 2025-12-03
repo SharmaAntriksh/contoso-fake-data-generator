@@ -39,10 +39,26 @@ def load_version(name: str):
         return None
 
 
-def save_version(name: str, cfg_section):
-    """Write config hash into the version file."""
+def save_version(name: str, cfg_section, output_path: Path):
+    """
+    Write version metadata for the given dimension.
+
+    Parameters:
+    - name: dimension name (e.g., "geography")
+    - cfg_section: resolved config section for that dimension
+    - output_path: parquet file path
+
+    We store:
+    - config hash (same as before)
+    - parquet mtime (useful for debugging)
+    """
     vf = _version_file(name)
-    data = {"config_hash": _compute_hash(cfg_section)}
+
+    data = {
+        "config_hash": _compute_hash(cfg_section),
+        "parquet_mtime": output_path.stat().st_mtime if output_path.exists() else None
+    }
+
     vf.write_text(json.dumps(data, indent=2))
 
 
