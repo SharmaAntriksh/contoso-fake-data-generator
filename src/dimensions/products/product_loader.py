@@ -1,5 +1,5 @@
-import pandas as pd
 from pathlib import Path
+import pandas as pd
 from src.utils import info, skip
 from src.versioning import should_regenerate, save_version
 
@@ -9,56 +9,44 @@ from .fake_generator import generate_fake_products
 
 def load_product_dimension(config, output_folder: Path):
     p = config["products"]
+    version_key = _version_key(p)
+    parquet_path = output_folder / "products.parquet"
 
-    # Load upstream dims first (always from parquet_dims)
-    df_cat = pd.read_parquet(output_folder / "product_category.parquet")
-    df_sub = pd.read_parquet(output_folder / "product_subcategory.parquet")
-
-    # Version key includes upstream actual data changes
-    version_key = _version_key(p, df_cat, df_sub)
-
-    # Versioning check
-    if not should_regenerate(
-        "products",
-        version_key,
-        output_folder / "products.parquet"
-    ):
+    # If unchanged, skip
+    if not should_regenerate("products", version_key, parquet_path):
         skip("Products up-to-date; skipping regeneration")
-        return _load_existing(output_folder)
+        return pd.read_parquet(parquet_path)
 
-    info("Loading Products")
-
-    # Select mode: Contoso vs Fake
+    # Mode
     if p["use_contoso_products"]:
-        info("⚠️ USING CONTOSO PRODUCTS LOADER")
+        info("📦 USING CONTOSO PRODUCTS")
         df = load_contoso_products(output_folder)
     else:
         info("🔥 USING FAKE PRODUCT GENERATOR")
-        df = generate_fake_products(p, output_folder)
+        generated_path = generate_fake_products(p, output_folder)
+        df = pd.read_parquet(generated_path)
 
-    # Save version metadata
-    save_version(
-        "products",
-        version_key,
-        output_folder / "products.parquet"
-    )
+    # Required minimal fields for the Sales fact pipeline
+    required = ["ProductKey", "SubcategoryKey", "UnitPrice", "UnitCost"]
+    for col in required:
+        if col not in df.columns:
+            raise ValueError(f"Missing required field in Products: {col}")
+
+    # Write final parquet
+    df.to_parquet(parquet_path, index=False)
+
+    # Save versioning
+    save_version("products", version_key, parquet_path)
 
     return df
 
 
-def _load_existing(folder: Path):
-    return pd.read_parquet(folder / "products.parquet")
-
-
-def _version_key(p, df_cat, df_sub):
+# ---------------------------------------------------------
+# Version key consistent with your design
+# ---------------------------------------------------------
+def _version_key(p):
     return {
         "use_contoso_products": p["use_contoso_products"],
         "num_products": p["num_products"],
-
-        # These guarantee regeneration whenever upstream dims change
-        "num_categories_actual": len(df_cat),
-        "num_subcategories_actual": len(df_sub),
-
-        # Determinism for fake mode
         "seed": p.get("seed"),
     }

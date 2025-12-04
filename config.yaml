@@ -24,7 +24,7 @@ sales:
   total_rows: 100000
   chunk_size: 1000000
 
-  file_format: "parquet"          # csv | parquet | deltaparquet
+  file_format: "deltaparquet"          # csv | parquet | deltaparquet
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -58,7 +58,7 @@ sales:
 # ---------------------------------------------------------------------
 products:
   use_contoso_products: false   # true=Contoso, false=Fake generated
-  num_products: 27301
+  num_products: 17301
   num_categories: 15            # MAX 15 for now
   num_subcategories: 75        # MAX 75 for now: 15 Category x 5 Subcategory under each category
   seed: 42       # optional: makes fake product generation repeatable

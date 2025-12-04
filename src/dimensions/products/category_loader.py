@@ -1,90 +1,82 @@
-# src/dimensions/products/category_loader.py
 import pandas as pd
 from pathlib import Path
 from src.utils import info, skip
 from src.versioning import should_regenerate, save_version
 
-from src.dimensions.products.fake_product_seeds import CATEGORIES
+from src.dimensions.products.seeds.categories import CATEGORIES
 
 
 def load_category_dimension(config, output_folder: Path):
     p = config["products"]
     version_key = _version_key(p)
+    parquet_path = output_folder / "product_category.parquet"
 
-    if not should_regenerate(
-        "product_category",
-        version_key,
-        output_folder / "product_category.parquet"
-    ):
+    # Skip if already up-to-date
+    if not should_regenerate("product_category", version_key, parquet_path):
         skip("Product Category up-to-date; skipping regeneration")
-        return _load_existing(output_folder)
+        return pd.read_parquet(parquet_path)
 
     info("Loading Product Category")
 
     if p["use_contoso_products"]:
-        df = _load_contoso_category(output_folder)
+        df = _load_contoso_category(parquet_path)
     else:
-        df = _generate_fake_category(p, output_folder)
+        df = _generate_fake_category(p, parquet_path)
 
-    save_version(
-        "product_category",
-        version_key,
-        output_folder / "product_category.parquet"
-    )
+    save_version("product_category", version_key, parquet_path)
     return df
 
 
 # ---------------------------------------------------------
-# CONTOSO MODE — Normalize Schema
+# CONTOSO MODE — Normalize to (CategoryKey, Category)
 # ---------------------------------------------------------
-def _load_contoso_category(output_folder: Path):
+def _load_contoso_category(parquet_path: Path):
     source_file = Path("data/contoso_products/product_category.parquet")
     df = pd.read_parquet(source_file)
 
     rename_map = {}
 
-    # Contoso typically uses `Category`
-    if "Category" in df.columns:
-        rename_map["Category"] = "CategoryName"
+    # Normalize names
+    if "CategoryName" in df.columns:
+        rename_map["CategoryName"] = "Category"
 
-    # Ensure key column is consistent
-    if "CategoryKey" in df.columns:
-        rename_map["CategoryKey"] = "ProductCategoryKey"
+    if "ProductCategoryKey" in df.columns:
+        rename_map["ProductCategoryKey"] = "CategoryKey"
 
+    # Apply renaming
     df = df.rename(columns=rename_map)
 
-    # Fail loudly if required column missing
-    if "CategoryName" not in df.columns:
-        raise ValueError(
-            f"Missing CategoryName in Contoso category file. Columns: {df.columns}"
-        )
+    # Validate required fields
+    required = ["CategoryKey", "Category"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"Contoso category file missing required fields: {missing}")
 
-    df.to_parquet(output_folder / "product_category.parquet", index=False)
+    # Keep clean output
+    df = df[["CategoryKey", "Category"]]
+
+    df.to_parquet(parquet_path, index=False)
     return df
 
 
 # ---------------------------------------------------------
-# FAKE MODE
+# FAKE MODE — Uses taxonomy seed list
 # ---------------------------------------------------------
-def _generate_fake_category(p, output_folder: Path):
-    selected = list(CATEGORIES.keys())[: p["num_categories"]]
+def _generate_fake_category(p, parquet_path: Path):
+    selected_cats = list(CATEGORIES.keys())[: p["num_categories"]]
 
     df = pd.DataFrame({
-        "ProductCategoryKey": range(1, len(selected) + 1),
-        "CategoryName": selected
+        "CategoryKey": range(1, len(selected_cats) + 1),
+        "Category": selected_cats,
     })
 
-    df.to_parquet(output_folder / "product_category.parquet", index=False)
+    df.to_parquet(parquet_path, index=False)
     return df
 
 
 # ---------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------
-def _load_existing(folder: Path):
-    return pd.read_parquet(folder / "product_category.parquet")
-
-
 def _version_key(p):
     return {
         "use_contoso_products": p["use_contoso_products"],
