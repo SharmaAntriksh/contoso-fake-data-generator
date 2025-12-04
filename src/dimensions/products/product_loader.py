@@ -30,10 +30,10 @@ def load_product_dimension(config, output_folder: Path):
 
     # Select mode: Contoso vs Fake
     if p["use_contoso_products"]:
-        print("⚠️ USING CONTOSO PRODUCTS LOADER")
+        info("⚠️ USING CONTOSO PRODUCTS LOADER")
         df = load_contoso_products(output_folder)
     else:
-        print("🔥 USING FAKE PRODUCT GENERATOR")
+        info("🔥 USING FAKE PRODUCT GENERATOR")
         df = generate_fake_products(p, output_folder)
 
     # Save version metadata

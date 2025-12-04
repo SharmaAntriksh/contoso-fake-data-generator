@@ -1,110 +1,122 @@
+# src/dimensions/products/fake_generator.py
+
 import random
 import numpy as np
 import pandas as pd
 from pathlib import Path
 
-from .fake_product_seeds import (
+# Unified seed imports
+from src.dimensions.products.fake_product_seeds import (
     BASE_PRODUCT_NAMES,
     ADJECTIVES,
-    SERIES
+    SERIES,
+    BRANDS,
+    BRAND_MAP,
+    CATEGORY_BRANDS,
+    PRICE_RANGES,
+    BRAND_CLASS,
+    CATEGORY_COLORS,
+    CATEGORY_STOCK_TYPE,
 )
 
 
 def generate_fake_products(p, output_folder: Path):
-    """
-    Generates fake product rows based on chosen subcategories.
-    Output schema matches Contoso expectations so Sales can run.
 
-    Columns generated:
-    - ProductKey
-    - ProductSubcategoryKey
-    - ProductName
-    - UnitPrice
-    - UnitCost
-    """
-
-    print("🔥 USING FAKE PRODUCT GENERATOR")
-
-    # Seed ensures reproducibility
     random.seed(p.get("seed", 42))
     rng = np.random.default_rng(p.get("seed", 42))
 
     num_products = p["num_products"]
 
-    # Load subcategories already generated/copied
+    # Load subcategory table
     df_sub = pd.read_parquet(output_folder / "product_subcategory.parquet")
+    
+    # Ensure expected columns exist after loader split
+    # Expected: ProductSubcategoryKey, Subcategory, CategoryName
+    if "Subcategory" in df_sub.columns:
+        df_sub = df_sub.rename(columns={"Subcategory": "SubcategoryName"})
+    if "Category" in df_sub.columns:
+        df_sub = df_sub.rename(columns={"Category": "CategoryName"})
 
-    product_rows = []
+    rows = []
 
     for product_key in range(1, num_products + 1):
-        # Random subcategory row
+
         sub = df_sub.sample(1).iloc[0]
 
         sub_key = sub["ProductSubcategoryKey"]
         sub_name = sub["SubcategoryName"]
+        category_name = sub["CategoryName"]
 
-        # Pick name components
-        base_names = BASE_PRODUCT_NAMES[sub_name]
-        base = random.choice(base_names)
+        # -------- PRODUCT NAME --------
+        base = random.choice(BASE_PRODUCT_NAMES[sub_name])
         adj = random.choice(ADJECTIVES)
         series = random.choice(SERIES)
         number = random.randint(10, 9999)
 
-        # Construct product name
         product_name = f"{adj} {base} {series} {number}"
 
-        # -----------------------------
-        # PRICE GENERATION (required!)
-        # -----------------------------
+        # -------- DESCRIPTION --------
+        product_description = (
+            f"A high quality {base.lower()} designed for everyday use."
+        )
 
-        # Category-based price ranges (approx. Contoso values)
-        PRICE_RANGES = {
-            "Audio": (50, 400),
-            "TV & Video": (150, 1500),
-            "Computers": (200, 2500),
-            "Cameras and camcorders": (80, 800),
-            "Cell phones": (100, 1200),
-            "Music, Movies and Audio Books": (5, 50),
-            "Games and Toys": (10, 200),
-            "Home Appliances": (40, 600),
-        }
+        # -------- PRODUCT CODE --------
+        product_code = f"{product_key:07d}"
 
-        # Get category to determine price range
-        try:
-            cat_range = PRICE_RANGES[sub["CategoryName"]]
-        except:
-            # fallback range
-            cat_range = (20, 500)
+        # -------- PRICING --------
+        cat_range = PRICE_RANGES.get(category_name, (20, 500))
+        unit_price = round(float(rng.uniform(*cat_range)), 2)
+        unit_cost = round(unit_price * float(rng.uniform(0.5, 0.9)), 2)
 
-        # Price generation
-        unit_price = float(rng.uniform(*cat_range))
-        unit_price = round(unit_price, 2)
+        # -------- BRAND --------
+        if sub_name in BRAND_MAP:
+            brand = random.choice(BRAND_MAP[sub_name])
+        elif category_name in CATEGORY_BRANDS:
+            brand = random.choice(CATEGORY_BRANDS[category_name])
+        else:
+            brand = random.choice(BRANDS)
 
-        # Cost is always lower
-        unit_cost = round(unit_price * rng.uniform(0.5, 0.9), 2)
+        # -------- CLASS --------
+        product_class = BRAND_CLASS.get(brand, BRAND_CLASS["_default"])
 
-        # Append row
-        product_rows.append([
+        # -------- COLOR --------
+        color_choices = CATEGORY_COLORS.get(category_name, ["Black"])
+        color = random.choice(color_choices)
+
+        # -------- STOCK TYPE --------
+        stock_options = CATEGORY_STOCK_TYPE.get(category_name, ["High"])
+        stock_type = random.choice(stock_options)
+        stock_code = str(stock_options.index(stock_type) + 1)
+
+        rows.append([
             product_key,
-            sub_key,
+            product_code,
             product_name,
-            unit_price,
-            unit_cost
+            product_description,
+            sub_key,
+            brand,
+            product_class,
+            color,
+            stock_code,
+            stock_type,
+            unit_cost,
+            unit_price
         ])
 
-    # Final DataFrame
-    df_products = pd.DataFrame(
-        product_rows,
-        columns=[
-            "ProductKey",
-            "ProductSubcategoryKey",
-            "ProductName",
-            "UnitPrice",
-            "UnitCost"
-        ]
-    )
+    df = pd.DataFrame(rows, columns=[
+        "ProductKey",
+        "ProductCode",
+        "ProductName",
+        "ProductDescription",
+        "ProductSubcategoryKey",
+        "Brand",
+        "Class",
+        "Color",
+        "StockTypeCode",
+        "StockType",
+        "UnitCost",
+        "UnitPrice"
+    ])
 
-    # Save output
-    df_products.to_parquet(output_folder / "products.parquet", index=False)
-
-    return df_products
+    df.to_parquet(output_folder / "products.parquet", index=False)
+    return df
