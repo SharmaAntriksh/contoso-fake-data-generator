@@ -13,6 +13,8 @@ from src.dimensions.dates import run_dates
 from src.dimensions.currency import run_currency
 from src.dimensions.exchange_rates import run_exchange_rates
 
+from src.dimensions.products.products import generate_product_dimension as run_products
+
 
 def _get_defaults_dates(cfg: Dict[str, Any]):
     """
@@ -64,28 +66,32 @@ def generate_dimensions(cfg: dict, parquet_dims_folder: Path):
     # date-dependent dimension keys (adjust if you add more date-sensitive dims)
     date_dependent = {"dates", "exchange_rates", "stores", "promotions", "currency"}
 
-    # 1️⃣ Geography (root) — not date-dependent
+    # 1 Geography (root) — not date-dependent
     run_geography(cfg, parquet_dims_folder)
 
-    # 2️⃣ Customers (depends on geography) — not date-dependent
+    # 2 Customers (depends on geography) — not date-dependent
     run_customers(cfg, parquet_dims_folder)
 
-    # 3️⃣ Stores (depends on geography) — date-dependent: include defaults.dates
+    # 3 Stores (depends on geography) — date-dependent: include defaults.dates
     cfg_for = _cfg_with_global_dates(cfg, "stores")
     run_stores(cfg_for, parquet_dims_folder)
 
-    # 4️⃣ Promotions (may be date-sensitive) — include defaults.dates
+    # 4 Promotions (may be date-sensitive) — include defaults.dates
     cfg_for = _cfg_with_global_dates(cfg, "promotions")
     run_promotions(cfg_for, parquet_dims_folder)
 
-    # 5️⃣ Dates (obviously date-dependent) — include defaults.dates
+    # 5 Products (product_category, product_subcategory, product)
+    #     Not date-dependent, so no need for cfg_with_global_dates
+    run_products(cfg, parquet_dims_folder)
+
+    # 6 Dates (obviously date-dependent) — include defaults.dates
     cfg_for = _cfg_with_global_dates(cfg, "dates")
     run_dates(cfg_for, parquet_dims_folder)
 
-    # 6️⃣ Currency (FX master / slicing may depend on dates) — include defaults.dates
+    # 7 Currency (FX master / slicing may depend on dates) — include defaults.dates
     cfg_for = _cfg_with_global_dates(cfg, "currency")
     run_currency(cfg_for, parquet_dims_folder)
 
-    # 7️⃣ Exchange Rates (date-dependent)
+    # 8 Exchange Rates (date-dependent)
     cfg_for = _cfg_with_global_dates(cfg, "exchange_rates")
     run_exchange_rates(cfg_for, parquet_dims_folder)

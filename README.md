@@ -40,35 +40,66 @@ Dimensions only regenerate when config changes — saves time on large datasets.
 ## Project Architecture
 
 ```
-src/
-├── pipeline/
-│   ├── config.py
-│   ├── dimensions.py
-│   ├── sales_pipeline.py
-│   ├── packaging.py
-│
-├── dimensions/
-│   ├── customers.py
-│   ├── promotions.py
-│   ├── stores.py
-│   ├── dates.py
-│   ├── currency.py
-│   ├── exchange_rates.py
-│   ├── geography_builder.py
-│
-├── facts/
-│   ├── sales.py
-│
-├── sql/
-│   ├── generate_bulk_insert_sql.py
-│   ├── generate_create_table_scripts.py
-│
-├── utils/
-│   ├── output_utils.py
-│   ├── versioning.py
-│   ├── static_schemas.py
-│
-└── main.py
+├── docs/
+│   └── assets/
+├── main.py
+├── samples/
+└── src/
+    ├── cli.py
+    ├── dimensions/
+    │   ├── __init__.py
+    │   ├── currency.py
+    │   ├── customers.py
+    │   ├── dates.py
+    │   ├── exchange_rates.py
+    │   ├── geography.py
+    │   ├── promotions.py
+    │   └── stores.py
+    ├── engine/
+    │   ├── __init__.py
+    │   ├── config/
+    │   │   ├── __init__.py
+    │   │   ├── config.py
+    │   │   └── config_loader.py
+    │   ├── dimension_loader.py
+    │   ├── packaging.py
+    │   └── runners/
+    │       ├── __init__.py
+    │       ├── dimensions_runner.py
+    │       └── sales_runner.py
+    ├── facts/
+    │   ├── __init__.py
+    │   └── sales/
+    │       ├── __init__.py
+    │       ├── sales.py
+    │       ├── sales_logic/
+    │       │   ├── __init__.py
+    │       │   ├── chunk_builder.py
+    │       │   ├── date_logic.py
+    │       │   ├── globals.py
+    │       │   ├── order_logic.py
+    │       │   ├── price_logic.py
+    │       │   └── promo_logic.py
+    │       ├── sales_worker.py
+    │       └── sales_writer.py
+    ├── integrations/
+    │   ├── __init__.py
+    │   └── fx_yahoo.py
+    ├── tools/
+    │   └── sql/
+    │       ├── __init__.py
+    │       ├── generate_bulk_insert_sql.py
+    │       ├── generate_create_table_scripts.py
+    │       └── project_tree.py
+    ├── utils/
+    │   ├── __init__.py
+    │   ├── logging_utils.py
+    │   ├── output_utils.py
+    │   └── static_schemas.py
+    └── versioning/
+        ├── __init__.py
+        ├── version_checker.py
+        └── version_store.py
 ```
 
 ## How the Pipeline Works
@@ -96,23 +127,43 @@ python main.py
 Example:
 
 ```json
-{
-  "sales": {
-    "total_rows": 5000000,
-    "chunk_size": 250000,
-    "file_format": "parquet",
-    "parquet_folder": "output/parquet_dims",
-    "out_folder": "output/facts",
-    "merge_parquet": true,
-    "write_delta": false
-  },
-  "customers": {
-    "geography_source": {
-      "path": "data/DimGeography.parquet",
-      "max_geos": 10000
-    }
-  }
-}
+# Final output location for packaged datasets
+final_output_folder: "./generated_datasets"
+
+# ---------------------------------------------------------------------
+# DEFAULTS (used unless overridden in each section)
+# ---------------------------------------------------------------------
+defaults:
+  seed: 42
+
+  dates:
+    start: "2020-01-03"
+    end: "2025-10-18"
+
+  paths:
+    geography: "./data/parquet_dims/geography.parquet"
+
+
+# ---------------------------------------------------------------------
+# SALES FACT GENERATION
+# ---------------------------------------------------------------------
+sales:
+  parquet_folder: "./data/parquet_dims"
+  out_folder: "./data/fact_out"
+
+  total_rows: 1000000
+  chunk_size: 1000000
+
+  file_format: "deltaparquet"          # csv | parquet | deltaparquet
+  write_delta: true
+  delta_output_folder: "./data/fact_out/delta"
+
+  merge_parquet: true
+  merged_file: "sales.parquet"
+  delete_chunks: true
+
+  row_group_size: 1000000
+  compression: "snappy"
 ```
 
 ## Extending the Project

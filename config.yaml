@@ -14,7 +14,6 @@ defaults:
   paths:
     geography: "./data/parquet_dims/geography.parquet"
 
-
 # ---------------------------------------------------------------------
 # SALES FACT GENERATION
 # ---------------------------------------------------------------------
@@ -22,7 +21,7 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 1000000
+  total_rows: 100000
   chunk_size: 1000000
 
   file_format: "deltaparquet"          # csv | parquet | deltaparquet
@@ -54,6 +53,15 @@ sales:
     enabled: true
     columns: ["Year", "Month"]
 
+# ---------------------------------------------------------------------
+# PRODUCTS
+# ---------------------------------------------------------------------
+products:
+  use_contoso_products: false   # true=Contoso, false=Fake generated
+  num_products: 5000
+  num_categories: 15
+  num_subcategories: 60
+  seed: 42       # optional: makes fake product generation repeatable
 
 # ---------------------------------------------------------------------
 # CUSTOMERS
