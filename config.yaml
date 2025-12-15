@@ -8,8 +8,8 @@ defaults:
   seed: 42
 
   dates:
-    start: "2022-01-01"
-    end: "2025-05-18"
+    start: "2021-01-01"
+    end: "2025-09-18"
 
   paths:
     geography: "./data/parquet_dims/geography.parquet"
@@ -21,7 +21,7 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 10000
+  total_rows: 100000
   chunk_size: 1000000
 
   file_format: "parquet"          # csv | parquet | deltaparquet
@@ -42,7 +42,7 @@ sales:
   write_pyarrow: true
   tune_chunk: false
 
-  skip_order_cols: true
+  skip_order_cols: false
 
   override:
     dates:
@@ -55,9 +55,15 @@ sales:
 
   pricing:
     enforce_min_price: true
-    pricing_mode: "bucketed"       # or "bucketed"
-    bucket_size: 0.25            # used only when pricing_mode = bucketed
-    discrete_factors: false      # optional alternative discretization mode
+    pricing_mode: "bucketed"
+    bucket_size: 0.25
+    discrete_factors: false
+
+    retail_price_endings: false 
+    
+    decimals:
+      mode: "micro"          # off | micro | strict
+      scale: 0.04          # max ± adjustment
 
 
 # ---------------------------------------------------------------------
@@ -74,12 +80,12 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 2237
+  total_customers: 18237
 
   pct_india: 1
   pct_us: 60
   pct_eu: 39
-  pct_org: 5
+  pct_org: 2
 
   names_folder: "./data/customer_names"
 

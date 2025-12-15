@@ -45,6 +45,11 @@ class State:
     discount_bucket_size = None
     unit_bucket_size = None
 
+    # decimals config (NEW)
+    decimals_mode = None        # off | micro | strict
+    decimals_scale = None
+    retail_price_endings = None
+
     # delta options
     no_discount_key = None
     delta_output_folder = None

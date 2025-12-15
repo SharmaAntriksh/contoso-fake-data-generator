@@ -50,6 +50,34 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     sales_out_folder.mkdir(parents=True, exist_ok=True)
 
     # info(f"Resolved sales output folder = {sales_out_folder}")
+    print("SALES CFG PRICING →", sales_cfg.get("pricing"))
+    # ------------------------------------------------------------
+    # Bind PRICING config into flat State (REQUIRED)
+    # ------------------------------------------------------------
+    from src.facts.sales.sales_logic.globals import State
+
+    pricing = sales_cfg.get("pricing", {})   # ✅ FIXED
+    decimals = pricing.get("decimals", {})
+
+    # ---- pricing ----
+    State.pricing_mode = pricing.get("pricing_mode", "random")
+    State.enforce_min_price = pricing.get("enforce_min_price", False)
+    State.bucket_size = pricing.get("bucket_size", 0.25)
+    State.discrete_factors = pricing.get("discrete_factors", False)
+
+    # ---- decimals (FLAT) ----
+    State.decimals_mode = decimals.get("mode", "off")
+    State.decimals_scale = decimals.get("scale", 0.02)
+
+    # ---- retail endings ----
+    State.retail_price_endings = pricing.get("retail_price_endings", False)
+
+    info(
+        f"Pricing bound → mode={State.pricing_mode}, "
+        f"decimals={State.decimals_mode}, "
+        f"retail_endings={State.retail_price_endings}"
+    )
+
 
     # ------------------------------------------------------------
     # Run sales fact builder

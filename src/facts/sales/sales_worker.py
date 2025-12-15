@@ -43,6 +43,8 @@ def init_sales_worker(
     discrete_factors,
     discount_bucket_size,
     unit_bucket_size,
+    decimals_mode,
+    decimals_scale,
 ):
     """
     Initialize global state using the new 'State' container.
@@ -110,6 +112,9 @@ def init_sales_worker(
         "discrete_factors": discrete_factors,
         "discount_bucket_size": discount_bucket_size,
         "unit_bucket_size": unit_bucket_size,
+
+        "decimals_mode": decimals_mode,
+        "decimals_scale": decimals_scale,
 
     })
 

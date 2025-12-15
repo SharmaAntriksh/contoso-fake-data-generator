@@ -102,7 +102,6 @@ def build_chunk_table(n, seed, no_discount_key=1):
     )
 
     order_ids_int = orders["order_ids_int"]
-    order_ids_str = orders["order_ids_str"]
     line_num = orders["line_num"]
     customer_keys = orders["customer_keys"]
     order_dates = orders["order_dates"]
@@ -164,7 +163,7 @@ def build_chunk_table(n, seed, no_discount_key=1):
         cols = {}
 
         if not skip_cols:
-            cols["SalesOrderNumber"] = pa.array(order_ids_str, pa.string())
+            cols["SalesOrderNumber"] = pa.array(order_ids_int, pa.int64())
             cols["SalesOrderLineNumber"] = pa.array(line_num, pa.int64())
 
         cols["CustomerKey"] = pa.array(customer_keys, pa.int64())
@@ -202,8 +201,9 @@ def build_chunk_table(n, seed, no_discount_key=1):
     df = {}
 
     if not skip_cols:
-        df["SalesOrderNumber"] = order_ids_str.astype(str)
+        df["SalesOrderNumber"] = order_ids_int
         df["SalesOrderLineNumber"] = line_num
+
 
     df["CustomerKey"] = customer_keys
     df["ProductKey"] = product_keys

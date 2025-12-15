@@ -334,6 +334,8 @@ def generate_sales_fact(
         pricing_cfg.get("discrete_factors", False),
         pricing_cfg.get("discount_bucket_size", 0.50),
         pricing_cfg.get("unit_bucket_size", 1.00),
+        pricing_cfg.get("decimals", {}).get("mode", "off"),
+        pricing_cfg.get("decimals", {}).get("scale", 0.02),
     )
 
     created_files = []
