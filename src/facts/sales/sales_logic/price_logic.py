@@ -23,6 +23,8 @@ def _micro_adjust(values, scale):
     eps = (np.mod(values * 100, 7) - 3) * scale
     return np.round(values + eps, 2)
 
+def _quantize(values, decimals=4):
+    return np.round(values.astype(np.float64), decimals)
 
 # -------------------------------------------------
 # Main
@@ -181,6 +183,13 @@ def compute_prices(rng, n, unit_price, unit_cost, promo_pct):
     final_unit_cost = np.minimum(final_unit_cost, final_net_price)
     final_unit_cost = np.clip(final_unit_cost, 0.01, None)
 
+    # -------------------------------------------------
+    # 12. FINAL QUANTIZATION (SQL-SAFE)
+    # -------------------------------------------------
+    final_unit_price = _quantize(final_unit_price, 4)
+    discount_amt     = _quantize(discount_amt, 4)
+    final_unit_cost  = _quantize(final_unit_cost, 4)
+    final_net_price  = _quantize(final_net_price, 4)
 
     return {
         "discount_amt": discount_amt,

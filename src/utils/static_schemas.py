@@ -21,7 +21,6 @@ STATIC_SCHEMAS = {
 
     "Geography": [
         ("GeographyKey", "SMALLINT NOT NULL"),
-        ("GeographyType","VARCHAR(50)"),
         ("City",         "VARCHAR(100)"),
         ("State",        "VARCHAR(100)"),
         ("Country",      "VARCHAR(100)"),
@@ -86,72 +85,78 @@ STATIC_SCHEMAS = {
         ("CloseReason",      "VARCHAR(MAX)"),
     ],
 
-   "Dates": [
-        ("Date",                         "DATE NOT NULL"),
-        ("Date Key",                     "INT NOT NULL"),
-        ("Year",                         "INT"),
-        ("Is Year Start",                "INT"),
-        ("Is Year End",                  "INT"),
+    "Dates": [
+        ("Date",                     "DATE NOT NULL"),
+        ("DateKey",                  "INT NOT NULL"),
 
-        ("Quarter",                      "INT"),
-        ("Quarter Start Date",           "DATE"),
-        ("Quarter End Date",             "DATE"),
-        ("Is Quarter Start",             "INT"),
-        ("Is Quarter End",               "INT"),
-        ("Quarter Year",                 "VARCHAR(10)"),
+        ("Year",                     "INT"),
+        ("IsYearStart",              "INT"),
+        ("IsYearEnd",                "INT"),
 
-        ("Month",                        "INT"),
-        ("Month Name",                   "VARCHAR(10)"),
-        ("Month Short",                  "VARCHAR(10)"),
-        ("Month Start Date",             "DATE"),
-        ("Month End Date",               "DATE"),
-        ("Month Year",                   "VARCHAR(20)"),
-        ("Month Year Number",            "INT"),
-        ("Is Month Start",               "INT"),
-        ("Is Month End",                 "INT"),
+        ("Quarter",                  "INT"),
+        ("QuarterStartDate",         "DATE"),
+        ("QuarterEndDate",           "DATE"),
+        ("IsQuarterStart",           "INT"),
+        ("IsQuarterEnd",             "INT"),
+        ("QuarterYear",              "VARCHAR(10)"),
 
-        ("Week Of Year ISO",             "INT"),
-        ("ISO Year",                     "INT"),
-        ("Week Of Month",                "INT"),
-        ("Week Start Date",              "DATE"),
-        ("Week End Date",                "DATE"),
+        ("Month",                    "INT"),
+        ("MonthName",                "VARCHAR(10)"),
+        ("MonthShort",               "VARCHAR(10)"),
+        ("MonthStartDate",           "DATE"),
+        ("MonthEndDate",             "DATE"),
+        ("MonthYear",                "VARCHAR(20)"),
+        ("MonthYearNumber",          "INT"),
+        ("CalendarMonthIndex",       "INT"),
+        ("CalendarQuarterIndex",     "INT"),
+        ("IsMonthStart",             "INT"),
+        ("IsMonthEnd",               "INT"),
 
-        ("Day",                          "INT"),
-        ("Day Name",                     "VARCHAR(10)"),
-        ("Day Short",                    "VARCHAR(10)"),
-        ("Day Of Year",                  "INT"),
-        ("Day Of Week",                  "INT"),
-        ("Is Weekend",                   "INT"),
-        ("Is Business Day",              "INT"),
-        ("Next Business Day",            "DATE"),
-        ("Previous Business Day",        "DATE"),
+        ("WeekOfYearISO",            "INT"),
+        ("ISOYear",                  "INT"),
+        ("WeekOfMonth",              "INT"),
+        ("WeekStartDate",            "DATE"),
+        ("WeekEndDate",              "DATE"),
 
-        ("Fiscal Year Start Year",       "INT"),
-        ("Fiscal Month Number",          "INT"),
-        ("Fiscal Quarter Number",        "INT"),
-        ("Fiscal Quarter Name",          "VARCHAR(20)"),
-        ("Fiscal Year Bin",              "VARCHAR(20)"),
-        ("Fiscal Year Month Number",     "INT"),
-        ("Fiscal Year Quarter Number",   "INT"),
-        ("Fiscal Year Start Date",       "DATE"),
-        ("Fiscal Year End Date",         "DATE"),
-        ("Fiscal Quarter Start Date",    "DATE"),
-        ("Fiscal Quarter End Date",      "DATE"),
-        ("Is Fiscal Year Start",         "BIT"),
-        ("Is Fiscal Year End",           "BIT"),
-        ("Is Fiscal Quarter Start",      "BIT"),
-        ("Is Fiscal Quarter End",        "BIT"),
+        ("Day",                      "INT"),
+        ("DayName",                  "VARCHAR(10)"),
+        ("DayShort",                 "VARCHAR(10)"),
+        ("DayOfYear",                "INT"),
+        ("DayOfWeek",                "INT"),
+        ("IsWeekend",                "INT"),
+        ("IsBusinessDay",            "INT"),
+        ("NextBusinessDay",          "DATE"),
+        ("PreviousBusinessDay",      "DATE"),
 
-        ("Fiscal Year",                  "INT"),
-        ("Fiscal Year Label",            "VARCHAR(10)"),
+        ("FiscalYearStartYear",      "INT"),
+        ("FiscalMonthNumber",        "INT"),
+        ("FiscalQuarterNumber",      "INT"),
+        ("FiscalQuarterName",        "VARCHAR(20)"),
+        ("FiscalYearBin",            "VARCHAR(20)"),
+        ("FiscalYearMonthNumber",    "INT"),
+        ("FiscalYearQuarterNumber",  "INT"),
+        ("FiscalMonthIndex",         "INT"),
+        ("FiscalQuarterIndex",       "INT"),
+        ("FiscalYearStartDate",      "DATE"),
+        ("FiscalYearEndDate",        "DATE"),
+        ("FiscalQuarterStartDate",   "DATE"),
+        ("FiscalQuarterEndDate",     "DATE"),
+        ("IsFiscalYearStart",        "BIT"),
+        ("IsFiscalYearEnd",          "BIT"),
+        ("IsFiscalQuarterStart",     "BIT"),
+        ("IsFiscalQuarterEnd",       "BIT"),
 
-        ("Is Today",                     "BIT"),
-        ("Is Current Year",              "BIT"),
-        ("Is Current Month",             "BIT"),
-        ("Is Current Quarter",           "BIT"),
+        ("FiscalYear",               "INT"),
+        ("FiscalYearLabel",          "VARCHAR(10)"),
 
-        ("Current Day Offset",           "INT")
+        ("IsToday",                  "BIT"),
+        ("IsCurrentYear",            "BIT"),
+        ("IsCurrentMonth",           "BIT"),
+        ("IsCurrentQuarter",         "BIT"),
+
+        ("CurrentDayOffset",         "INT"),
     ],
+
 
     "Currency": [
         ("CurrencyKey", "INT"),
@@ -194,6 +199,49 @@ STATIC_SCHEMAS = {
     ]
 }
 
+# ---------------------------------------------------------
+# DATE COLUMN GROUPS (logical, superset)
+# ---------------------------------------------------------
+
+DATE_COLUMN_GROUPS = {
+    "calendar": {
+        "Date","DateKey",
+        "Year","IsYearStart","IsYearEnd",
+        "Quarter","QuarterStartDate","QuarterEndDate",
+        "IsQuarterStart","IsQuarterEnd",
+        "QuarterYear",
+        "Month","MonthName","MonthShort",
+        "MonthStartDate","MonthEndDate",
+        "MonthYear","MonthYearNumber",
+        "CalendarMonthIndex","CalendarQuarterIndex",
+        "IsMonthStart","IsMonthEnd",
+        "WeekOfMonth",
+        "Day","DayName","DayShort","DayOfYear","DayOfWeek",
+        "IsWeekend","IsBusinessDay",
+        "NextBusinessDay","PreviousBusinessDay",
+        "IsToday","IsCurrentYear","IsCurrentMonth",
+        "IsCurrentQuarter","CurrentDayOffset",
+    },
+    "iso": {
+        "WeekOfYearISO",
+        "ISOYear",
+        "WeekStartDate",
+        "WeekEndDate",
+    },
+    "fiscal": {
+        "FiscalYearStartYear","FiscalMonthNumber","FiscalQuarterNumber",
+        "FiscalMonthIndex","FiscalQuarterIndex",
+        "FiscalQuarterName","FiscalYearBin",
+        "FiscalYearMonthNumber","FiscalYearQuarterNumber",
+        "FiscalYearStartDate","FiscalYearEndDate",
+        "FiscalQuarterStartDate","FiscalQuarterEndDate",
+        "IsFiscalYearStart","IsFiscalYearEnd",
+        "IsFiscalQuarterStart","IsFiscalQuarterEnd",
+        "FiscalYear","FiscalYearLabel",
+    }
+}
+
+
 def get_sales_schema(skip_order_cols: bool):
     """Return the Sales schema with or without order number columns."""
     base_schema = STATIC_SCHEMAS["Sales"]
@@ -206,4 +254,33 @@ def get_sales_schema(skip_order_cols: bool):
         (col, dtype)
         for col, dtype in base_schema
         if col not in ("SalesOrderNumber", "SalesOrderLineNumber")
+    ]
+
+
+def get_dates_schema(dates_cfg: dict):
+    """
+    Return Dates schema filtered by config include flags.
+    Defaults to calendar-only (backward compatible).
+    """
+
+    include_cfg = dates_cfg.get("include", {})
+
+    include_calendar = include_cfg.get("calendar", True)
+    include_iso = include_cfg.get("iso", False)
+    include_fiscal = include_cfg.get("fiscal", False)
+
+    allowed_cols = set()
+
+    if include_calendar:
+        allowed_cols |= DATE_COLUMN_GROUPS["calendar"]
+    if include_iso:
+        allowed_cols |= DATE_COLUMN_GROUPS["iso"]
+    if include_fiscal:
+        allowed_cols |= DATE_COLUMN_GROUPS["fiscal"]
+
+    # Preserve original STATIC_SCHEMAS order
+    return [
+        (col, dtype)
+        for col, dtype in STATIC_SCHEMAS["Dates"]
+        if col in allowed_cols
     ]

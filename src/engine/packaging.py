@@ -137,11 +137,14 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
                     csv_folder=str(dims_folder),
                     table_name=None,
                     output_sql_file=str(final_folder / "bulk_insert_dims.sql"),
+                    mode="csv",
                 )
                 generate_bulk_insert_script(
                     csv_folder=str(facts_folder),
                     table_name="Sales",
                     output_sql_file=str(final_folder / "bulk_insert_facts.sql"),
+                    mode="legacy",
+                    row_terminator="0x0a",
                 )
 
         with stage("Generating CREATE TABLE Scripts"):
@@ -149,8 +152,10 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
                 dim_folder=dims_out,
                 fact_folder=facts_out,
                 output_folder=final_folder,
+                cfg=cfg,
                 skip_order_cols=sales_cfg.get("skip_order_cols", False),
             )
+
     else:
         info("Skipping SQL script generation for non-CSV format.")
 

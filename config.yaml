@@ -163,6 +163,11 @@ stores:
 dates:
   fiscal_month_offset: 5
 
+  include:
+    calendar: true        # always true (safe default)
+    iso: false            # ISO week columns
+    fiscal: false         # fiscal year / quarter / month columns
+
   override:
     dates:
       start: "2020-01-01"     # optional, null = use defaults

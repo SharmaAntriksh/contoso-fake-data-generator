@@ -9,8 +9,9 @@ def generate_bulk_insert_script(
     table_name=None,
     output_sql_file="bulk_insert.sql",
     field_terminator=",",
-    row_terminator="\n",
+    row_terminator="0x0a",
     codepage="65001",
+    mode="legacy",   # "legacy" | "csv"
 ):
     """
     Generate a BULK INSERT SQL script for all CSV files in a folder.
@@ -22,7 +23,7 @@ def generate_bulk_insert_script(
     if output_sql_file == "bulk_insert.sql":
         output_sql_file = str(csv_folder / "_ignored_bulk_insert.sql")
 
-    # Collect CSV Files
+    # Collect CSV files
     csv_files = sorted(
         f for f in os.listdir(csv_folder)
         if f.lower().endswith(".csv")
@@ -40,26 +41,41 @@ def generate_bulk_insert_script(
         ""
     ]
 
-    # Build BULK INSERT statements
+    # Build BULK INSERT statements (FIXED)
     for csv_file in csv_files:
+        base = os.path.splitext(csv_file)[0]
 
-        inferred_table = table_name or os.path.splitext(csv_file)[0].capitalize()
-        csv_full_path = os.path.abspath(os.path.join(csv_folder, csv_file))
+        inferred_table = (
+            table_name
+            or base.replace("_", " ").title().replace(" ", "")
+        )
 
-        escaped_row_terminator = row_terminator.encode('unicode_escape').decode()
+        csv_full_path = os.path.abspath(csv_folder / csv_file)
 
-        stmt = f"""
+        if mode == "csv":
+            stmt = f"""
 BULK INSERT {inferred_table}
 FROM '{csv_full_path}'
 WITH (
     FORMAT = 'CSV',
     FIRSTROW = 2,
-    FIELDTERMINATOR = '{field_terminator}',
-    ROWTERMINATOR = '{escaped_row_terminator}',
     CODEPAGE = '{codepage}',
     TABLOCK
 );
 """
+        else:  # legacy
+            stmt = f"""
+BULK INSERT {inferred_table}
+FROM '{csv_full_path}'
+WITH (
+    FIRSTROW = 2,
+    FIELDTERMINATOR = '{field_terminator}',
+    ROWTERMINATOR = '{row_terminator}',
+    CODEPAGE = '{codepage}',
+    TABLOCK
+);
+"""
+
         lines.append(stmt.strip())
 
     # Write final SQL script

@@ -106,7 +106,7 @@ def build_dim_geography(cfg):
     ).reset_index(drop=True)
 
     # Assign deterministic keys
-    sampled["GeographyKey"] = np.arange(1, target_rows + 1)
+    sampled.insert(0, "GeographyKey", np.arange(1, target_rows + 1))
 
     return sampled
 
@@ -134,7 +134,20 @@ def run_geography(cfg, parquet_folder: Path):
         return
 
     with stage("Generating Geography"):
-        df = build_dim_geography(cfg)   # still pass full cfg for building
+        df = build_dim_geography(cfg)
+
+        # Explicit domain column order (no SQL dependency)
+        output_cols = [
+            "GeographyKey",
+            "City",
+            "State",
+            "Country",
+            "Continent",
+            "ISOCode",
+        ]
+
+        # Drop internal columns like Weight
+        df = df[output_cols]
         df.to_parquet(out_path, index=False)
 
     save_version("geography", geo_cfg, out_path)

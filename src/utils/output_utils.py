@@ -94,7 +94,11 @@ def create_final_output_folder(
         for f in parquet_dims.glob("*.parquet"):
             df = pd.read_parquet(f)
             csv_path = dims_out / (f.stem + ".csv")
-            df.to_csv(csv_path, index=False)
+            df.to_csv(
+                csv_path,
+                index=False,
+                encoding="utf-8"
+            )
 
     elif ff == "deltaparquet":
         # Convert parquet → Delta table
@@ -185,7 +189,11 @@ def create_final_output_folder(
             out_file.parent.mkdir(parents=True, exist_ok=True)
 
             df = pd.read_parquet(file)
-            df.to_csv(out_file, index=False)
+            df.to_csv(
+                out_file,
+                index=False,
+                encoding="utf-8"
+            )
 
         done("Creating Final Output Folder")
         return final_folder

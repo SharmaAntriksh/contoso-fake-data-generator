@@ -5,96 +5,133 @@
 import pandas as pd
 import numpy as np
 import re
-from datetime import datetime
 from pathlib import Path
 
-from src.utils import info, fail, skip, stage
+from src.utils import info, skip, stage
 from src.versioning import should_regenerate, save_version
 
 
 # ---------------------------------------------------------
-# ORIGINAL GENERATOR (unchanged)
+# DATE COLUMN GROUPS
+# ---------------------------------------------------------
+
+CALENDAR_COLUMNS = [
+    "Date","DateKey",
+    "Year","IsYearStart","IsYearEnd",
+    "Quarter","QuarterStartDate","QuarterEndDate",
+    "IsQuarterStart","IsQuarterEnd",
+    "QuarterYear",
+    "Month","MonthName","MonthShort",
+    "MonthStartDate","MonthEndDate",
+    "MonthYear","MonthYearNumber","CalendarMonthIndex","CalendarQuarterIndex",
+    "IsMonthStart","IsMonthEnd",
+    "WeekOfMonth",
+    "Day","DayName","DayShort","DayOfYear","DayOfWeek",
+    "IsWeekend","IsBusinessDay",
+    "NextBusinessDay","PreviousBusinessDay",
+    "IsToday","IsCurrentYear","IsCurrentMonth",
+    "IsCurrentQuarter","CurrentDayOffset"
+]
+
+ISO_COLUMNS = [
+    "WeekOfYearISO",
+    "ISOYear",
+    "WeekStartDate",
+    "WeekEndDate",
+]
+
+FISCAL_COLUMNS = [
+    "FiscalYearStartYear","FiscalMonthNumber","FiscalQuarterNumber",
+    "FiscalMonthIndex","FiscalQuarterIndex",
+    "FiscalQuarterName","FiscalYearBin",
+    "FiscalYearMonthNumber","FiscalYearQuarterNumber",
+    "FiscalYearStartDate","FiscalYearEndDate",
+    "FiscalQuarterStartDate","FiscalQuarterEndDate",
+    "IsFiscalYearStart","IsFiscalYearEnd",
+    "IsFiscalQuarterStart","IsFiscalQuarterEnd",
+    "FiscalYear","FiscalYearLabel",
+]
+
+
+def resolve_date_columns(dates_cfg):
+    include_cfg = dates_cfg.get("include", {})
+
+    cols = []
+    if include_cfg.get("calendar", True):
+        cols.extend(CALENDAR_COLUMNS)
+    if include_cfg.get("iso", False):
+        cols.extend(ISO_COLUMNS)
+    if include_cfg.get("fiscal", False):
+        cols.extend(FISCAL_COLUMNS)
+
+    return cols
+
+
+# ---------------------------------------------------------
+# DATE GENERATOR (LOGIC UNCHANGED)
 # ---------------------------------------------------------
 
 def generate_date_table(start_date, end_date, first_fy_month):
-    """
-    Full calendar + fiscal + business-day enriched date dimension.
-    Output schema identical to original version.
-    """
 
-    # ============================================================
-    # CONFIG
-    # ============================================================
     start_date = start_date or "2020-01-01"
-    end_date   = end_date or "2026-12-31"
+    end_date = end_date or "2026-12-31"
     fy_start_month = first_fy_month or 5
 
-    # ============================================================
-    # BASE RANGE
-    # ============================================================
     df = pd.DataFrame({"Date": pd.date_range(start_date, end_date, freq="D")})
 
-    # ============================================================
-    # BASIC FIELDS
-    # ============================================================
-    df["Date Key"] = df["Date"].dt.strftime("%Y%m%d").astype(int)
+    df["DateKey"] = df["Date"].dt.strftime("%Y%m%d").astype(int)
 
     df["Year"] = df["Date"].dt.year
     df["Month"] = df["Date"].dt.month
     df["Day"] = df["Date"].dt.day
     df["Quarter"] = df["Date"].dt.quarter
 
-    df["Month Name"] = df["Date"].dt.strftime("%B")
-    df["Month Short"] = df["Date"].dt.strftime("%b")
+    df["MonthName"] = df["Date"].dt.strftime("%B")
+    df["MonthShort"] = df["Date"].dt.strftime("%b")
 
-    df["Month Start Date"] = df["Date"].values.astype("datetime64[M]")
-    df["Month End Date"] = df["Month Start Date"] + pd.offsets.MonthEnd(1)
+    df["MonthStartDate"] = df["Date"].values.astype("datetime64[M]")
+    df["MonthEndDate"] = df["MonthStartDate"] + pd.offsets.MonthEnd(1)
 
-    df["Day Name"] = df["Date"].dt.strftime("%A")
-    df["Day Short"] = df["Date"].dt.strftime("%a")
-    df["Day Of Year"] = df["Date"].dt.dayofyear
+    df["DayName"] = df["Date"].dt.strftime("%A")
+    df["DayShort"] = df["Date"].dt.strftime("%a")
+    df["DayOfYear"] = df["Date"].dt.dayofyear
 
-    df["Calendar Year Month Number"] = df["Year"] * 12 + df["Month"]
+    df["MonthYear"] = df["Date"].dt.strftime("%b %Y")
+    df["MonthYearNumber"] = df["Year"] * 100 + df["Month"]
+    df["CalendarMonthIndex"] = df["Year"] * 12 + df["Month"]
+    df["CalendarQuarterIndex"] = df["Year"] * 4 + df["Quarter"]
 
-    # ============================================================
-    # WEEKDAY / BUSINESS-DAY LOGIC
-    # ============================================================
     weekday = df["Date"].dt.weekday
-    df["Day Of Week"] = (weekday + 1) % 7
-    df["Is Weekend"] = df["Day Of Week"].isin([0, 6]).astype(int)
-    df["Is Business Day"] = (df["Is Weekend"] == 0).astype(int)
+    df["DayOfWeek"] = (weekday + 1) % 7
+    df["IsWeekend"] = df["DayOfWeek"].isin([0, 6]).astype(int)
+    df["IsBusinessDay"] = (df["IsWeekend"] == 0).astype(int)
 
     iso = df["Date"].dt.isocalendar()
-    df["Week Of Year ISO"] = iso.week.astype(int)
-    df["ISO Year"] = iso.year.astype(int)
+    df["WeekOfYearISO"] = iso.week.astype(int)
+    df["ISOYear"] = iso.year.astype(int)
 
-    df["Quarter Start Date"] = pd.to_datetime(
+    df["QuarterStartDate"] = pd.to_datetime(
         df["Year"].astype(str)
         + "-"
         + ((df["Quarter"] - 1) * 3 + 1).astype(str).str.zfill(2)
         + "-01"
     )
-    df["Quarter End Date"] = df["Quarter Start Date"] + pd.offsets.QuarterEnd(0)
+    df["QuarterEndDate"] = df["QuarterStartDate"] + pd.offsets.QuarterEnd(0)
 
-    df["Is Month Start"] = (df["Day"] == 1).astype(int)
-    df["Is Month End"] = df["Date"].dt.is_month_end.astype(int)
-    df["Is Quarter Start"] = df["Date"].dt.is_quarter_start.astype(int)
-    df["Is Quarter End"] = df["Date"].dt.is_quarter_end.astype(int)
-    df["Is Year Start"] = ((df["Month"] == 1) & (df["Day"] == 1)).astype(int)
-    df["Is Year End"] = ((df["Month"] == 12) & (df["Day"] == 31)).astype(int)
+    df["IsMonthStart"] = (df["Day"] == 1).astype(int)
+    df["IsMonthEnd"] = df["Date"].dt.is_month_end.astype(int)
+    df["IsQuarterStart"] = df["Date"].dt.is_quarter_start.astype(int)
+    df["IsQuarterEnd"] = df["Date"].dt.is_quarter_end.astype(int)
+    df["IsYearStart"] = ((df["Month"] == 1) & (df["Day"] == 1)).astype(int)
+    df["IsYearEnd"] = ((df["Month"] == 12) & (df["Day"] == 31)).astype(int)
 
-    df["Month Year"] = df["Date"].dt.strftime("%b %Y")
-    df["Month Year Number"] = df["Year"] * 100 + df["Month"]
-    df["Quarter Year"] = "Q" + df["Quarter"].astype(str) + " " + df["Year"].astype(str)
+    df["QuarterYear"] = "Q" + df["Quarter"].astype(str) + " " + df["Year"].astype(str)
+    df["WeekOfMonth"] = ((df["Day"] - 1) // 7 + 1).astype(int)
 
-    df["Week Of Month"] = ((df["Day"] - 1) // 7 + 1).astype(int)
-    df["Week Start Date"] = df["Date"] - pd.to_timedelta(df["Date"].dt.weekday, unit="D")
-    df["Week End Date"] = df["Week Start Date"] + pd.Timedelta(days=6)
+    df["WeekStartDate"] = df["Date"] - pd.to_timedelta(df["Date"].dt.weekday, unit="D")
+    df["WeekEndDate"] = df["WeekStartDate"] + pd.Timedelta(days=6)
 
-    # ============================================================
-    # BUSINESS-DAY NEXT / PREVIOUS
-    # ============================================================
-    biz = df.loc[df["Is Business Day"] == 1, ["Date"]].rename(columns={"Date": "BizDate"})
+    biz = df.loc[df["IsBusinessDay"] == 1, ["Date"]].rename(columns={"Date": "BizDate"})
 
     df = pd.merge_asof(
         df.sort_values("Date"),
@@ -103,212 +140,107 @@ def generate_date_table(start_date, end_date, first_fy_month):
         right_on="BizDate",
         direction="forward"
     ).drop(columns=["BizDate"])
-    df.rename(columns={"NextBD": "Next Business Day"}, inplace=True)
+    df.rename(columns={"NextBD": "NextBusinessDay"}, inplace=True)
 
-    biz_sorted = biz.sort_values("BizDate")
     df = pd.merge_asof(
         df,
-        biz_sorted.assign(PrevBD=biz_sorted["BizDate"]),
+        biz.sort_values("BizDate").assign(PrevBD=biz["BizDate"]),
         left_on="Date",
         right_on="BizDate",
         direction="backward"
     ).drop(columns=["BizDate"])
-    df.rename(columns={"PrevBD": "Previous Business Day"}, inplace=True)
+    df.rename(columns={"PrevBD": "PreviousBusinessDay"}, inplace=True)
 
-    # ============================================================
-    # FISCAL CALCULATIONS
-    # ============================================================
-    df["Fiscal Year Start Year"] = np.where(
-        df["Month"] >= fy_start_month,
-        df["Year"],
-        df["Year"] - 1
+    df["FiscalYearStartYear"] = np.where(
+        df["Month"] >= fy_start_month, df["Year"], df["Year"] - 1
     )
 
-    df["Fiscal Month Number"] = ((df["Month"] - fy_start_month + 12) % 12) + 1
-    df["Fiscal Quarter Number"] = ((df["Fiscal Month Number"] - 1) // 3 + 1)
+    df["FiscalMonthNumber"] = ((df["Month"] - fy_start_month + 12) % 12) + 1
+    df["FiscalQuarterNumber"] = ((df["FiscalMonthNumber"] - 1) // 3 + 1)
 
-    df["Fiscal Year Bin"] = (
-        df["Fiscal Year Start Year"].astype(str)
+    df["FiscalYearBin"] = (
+        df["FiscalYearStartYear"].astype(str)
         + "-"
-        + (df["Fiscal Year Start Year"] + 1).astype(str)
+        + (df["FiscalYearStartYear"] + 1).astype(str)
     )
 
-    df["Fiscal Quarter Name"] = (
-        "Q" + df["Fiscal Quarter Number"].astype(str)
-        + " FY" + (df["Fiscal Year Start Year"] + 1).astype(str)
+    df["FiscalQuarterName"] = (
+        "Q" + df["FiscalQuarterNumber"].astype(str)
+        + " FY" + (df["FiscalYearStartYear"] + 1).astype(str)
     )
 
-    df["Fiscal Year Month Number"] = df["Fiscal Year Start Year"] * 12 + df["Fiscal Month Number"]
-    df["Fiscal Year Quarter Number"] = df["Fiscal Year Start Year"] * 4 + df["Fiscal Quarter Number"]
+    df["FiscalYearMonthNumber"] = df["FiscalYearStartYear"] * 12 + df["FiscalMonthNumber"]
+    df["FiscalYearQuarterNumber"] = df["FiscalYearStartYear"] * 4 + df["FiscalQuarterNumber"]
 
-    df["Fiscal Year Start Date"] = pd.to_datetime(
-        df["Fiscal Year Start Year"].astype(str)
+    df["FiscalMonthIndex"] = df["FiscalYearStartYear"] * 12 + df["FiscalMonthNumber"]
+    df["FiscalQuarterIndex"] = df["FiscalYearStartYear"] * 4 + df["FiscalQuarterNumber"]
+
+    df["FiscalYearStartDate"] = pd.to_datetime(
+        df["FiscalYearStartYear"].astype(str)
         + "-"
         + str(fy_start_month).zfill(2)
         + "-01"
     )
-    df["Fiscal Year End Date"] = df["Fiscal Year Start Date"] + pd.DateOffset(years=1) - pd.Timedelta(days=1)
+    df["FiscalYearEndDate"] = df["FiscalYearStartDate"] + pd.DateOffset(years=1) - pd.Timedelta(days=1)
 
-    fq_shift = (df["Fiscal Quarter Number"] - 1) * 3
-    fq_year = df["Fiscal Year Start Date"].dt.year + ((df["Fiscal Year Start Date"].dt.month + fq_shift - 1) // 12)
-    fq_month = (df["Fiscal Year Start Date"].dt.month + fq_shift - 1) % 12 + 1
+    fq_shift = (df["FiscalQuarterNumber"] - 1) * 3
+    fq_year = df["FiscalYearStartDate"].dt.year + ((df["FiscalYearStartDate"].dt.month + fq_shift - 1) // 12)
+    fq_month = (df["FiscalYearStartDate"].dt.month + fq_shift - 1) % 12 + 1
 
-    df["Fiscal Quarter Start Date"] = pd.to_datetime(
+    df["FiscalQuarterStartDate"] = pd.to_datetime(
         fq_year.astype(str) + "-" + fq_month.astype(str).str.zfill(2) + "-01"
     )
-    df["Fiscal Quarter End Date"] = (
-        df["Fiscal Quarter Start Date"] + pd.DateOffset(months=3) - pd.Timedelta(days=1)
-    )
+    df["FiscalQuarterEndDate"] = df["FiscalQuarterStartDate"] + pd.DateOffset(months=3) - pd.Timedelta(days=1)
 
-    df["Is Fiscal Year Start"] = (df["Date"] == df["Fiscal Year Start Date"]).astype(int)
-    df["Is Fiscal Year End"] = (df["Date"] == df["Fiscal Year End Date"]).astype(int)
-    df["Is Fiscal Quarter Start"] = (df["Date"] == df["Fiscal Quarter Start Date"]).astype(int)
-    df["Is Fiscal Quarter End"] = (df["Date"] == df["Fiscal Quarter End Date"]).astype(int)
+    df["IsFiscalYearStart"] = (df["Date"] == df["FiscalYearStartDate"]).astype(int)
+    df["IsFiscalYearEnd"] = (df["Date"] == df["FiscalYearEndDate"]).astype(int)
+    df["IsFiscalQuarterStart"] = (df["Date"] == df["FiscalQuarterStartDate"]).astype(int)
+    df["IsFiscalQuarterEnd"] = (df["Date"] == df["FiscalQuarterEndDate"]).astype(int)
 
-    df["Fiscal Year"] = np.where(
-        df["Month"] < fy_start_month,
-        df["Year"],
-        df["Year"] + 1
+    df["FiscalYear"] = np.where(
+        df["Month"] < fy_start_month, df["Year"], df["Year"] + 1
     ).astype(int)
 
-    df["Fiscal Year Label"] = "FY " + df["Fiscal Year"].astype(str)
+    df["FiscalYearLabel"] = "FY " + df["FiscalYear"].astype(str)
 
-    # ============================================================
-    # CURRENT PERIOD FLAGS
-    # ============================================================
     today = pd.Timestamp.today().normalize()
-
-    df["Is Today"] = (df["Date"] == today).astype(int)
-    df["Is Current Year"] = (df["Year"] == today.year).astype(int)
-    df["Is Current Month"] = ((df["Year"] == today.year) & (df["Month"] == today.month)).astype(int)
+    df["IsToday"] = (df["Date"] == today).astype(int)
+    df["IsCurrentYear"] = (df["Year"] == today.year).astype(int)
+    df["IsCurrentMonth"] = ((df["Year"] == today.year) & (df["Month"] == today.month)).astype(int)
 
     current_quarter = (today.month - 1) // 3 + 1
-    df["Is Current Quarter"] = ((df["Year"] == today.year) &
-                                (df["Quarter"] == current_quarter)).astype(int)
+    df["IsCurrentQuarter"] = ((df["Year"] == today.year) & (df["Quarter"] == current_quarter)).astype(int)
+    df["CurrentDayOffset"] = (df["Date"] - today).dt.days
 
-    df["Current Day Offset"] = (df["Date"] - today).dt.days
-
-    # ============================================================
-    # COLUMN NAMES → Title Case
-    # ============================================================
-    def camel_to_title(x):
-        x = re.sub(r"([A-Z]+)$", r" \1", x)
-        x = re.sub(r"(?<!^)(?<![A-Z])(?=[A-Z])", " ", x)
-        parts = [p if p.isupper() else p.title() for p in x.split()]
-        return " ".join(parts)
-
-    df.columns = [camel_to_title(col) for col in df.columns]
-    df.rename(columns={"Iso Year": "ISO Year"}, inplace=True)
-
-    date_cols = df.select_dtypes(include="datetime").columns
-    df[date_cols] = df[date_cols].apply(lambda col: pd.to_datetime(col).dt.date)
-
-    # ============================================================
-    # COLUMN ORDER (unchanged)
-    # ============================================================
-    df = df[
-        [
-            "Date","Date Key",
-            "Year","Is Year Start","Is Year End",
-            "Quarter","Quarter Start Date","Quarter End Date",
-            "Is Quarter Start","Is Quarter End",
-            "Quarter Year",
-            "Month","Month Name","Month Short",
-            "Month Start Date","Month End Date",
-            "Month Year","Month Year Number", "Calendar Year Month Number",
-            "Is Month Start","Is Month End",
-            "Week Of Year ISO","ISO Year","Week Of Month",
-            "Week Start Date","Week End Date",
-            "Day","Day Name","Day Short","Day Of Year","Day Of Week",
-            "Is Weekend","Is Business Day",
-            "Next Business Day","Previous Business Day",
-            "Fiscal Year Start Year","Fiscal Month Number","Fiscal Quarter Number",
-            "Fiscal Quarter Name","Fiscal Year Bin",
-            "Fiscal Year Month Number","Fiscal Year Quarter Number",
-            "Fiscal Year Start Date","Fiscal Year End Date",
-            "Fiscal Quarter Start Date","Fiscal Quarter End Date",
-            "Is Fiscal Year Start","Is Fiscal Year End",
-            "Is Fiscal Quarter Start","Is Fiscal Quarter End",
-            "Fiscal Year","Fiscal Year Label",
-            "Is Today","Is Current Year","Is Current Month",
-            "Is Current Quarter","Current Day Offset"
-        ]
-    ]
-
+    df = df[CALENDAR_COLUMNS + ISO_COLUMNS + FISCAL_COLUMNS]
     return df
 
 
 # ---------------------------------------------------------
 # PIPELINE WRAPPER
 # ---------------------------------------------------------
+
 def run_dates(cfg, parquet_folder: Path):
-    """
-    Pipeline wrapper for Date dimension.
-    Uses:
-    - cfg["dates"]
-    - cfg["defaults"]["dates"]
-    """
 
     out_path = parquet_folder / "dates.parquet"
-
-    # ---------------------------------------------------------
-    # Build versioning input
-    # ---------------------------------------------------------
     dates_cfg = cfg["dates"]
-    defaults_dates = (
-        cfg.get("defaults", {}).get("dates")
-        or cfg.get("_defaults", {}).get("dates")
-    )
+    defaults_dates = cfg.get("defaults", {}).get("dates") or cfg.get("_defaults", {}).get("dates")
 
-    # Versioning must depend on BOTH the per-dimension config AND defaults.dates
-    version_cfg = {
-        **dates_cfg,
-        "global_dates": defaults_dates
-    }
+    version_cfg = {**dates_cfg, "global_dates": defaults_dates}
 
-    # ---------------------------------------------------------
-    # Version check (correct)
-    # ---------------------------------------------------------
     if not should_regenerate("dates", version_cfg, out_path):
         skip("Dates up-to-date; skipping.")
         return
 
-    # ---------------------------------------------------------
-    # Resolve actual date range
-    # Priority:
-    #   1. override.dates.start/end → EXACT (no expansion)
-    #   2. defaults.dates.start/end → EXPANDED to full calendar years
-    # ---------------------------------------------------------
-    override_dates = dates_cfg.get("override", {}).get("dates", {})
-
-    if "start" in override_dates and "end" in override_dates:
-        # Override provided → use exact range
-        start_date = override_dates["start"]
-        end_date   = override_dates["end"]
-    else:
-        # Use defaults and expand to full calendar years
-        start_date = defaults_dates.get("start")
-        end_date   = defaults_dates.get("end")
-
-        if start_date:
-            s = pd.to_datetime(start_date)
-            start_date = s.replace(month=1, day=1).strftime("%Y-%m-%d")
-
-        if end_date:
-            e = pd.to_datetime(end_date)
-            end_date = e.replace(month=12, day=31).strftime("%Y-%m-%d")
+    override = dates_cfg.get("override", {}).get("dates", {})
+    start_date = override.get("start") or defaults_dates.get("start")
+    end_date = override.get("end") or defaults_dates.get("end")
 
     fiscal_start_month = dates_cfg.get("fiscal_month_offset", 5)
 
-    # ---------------------------------------------------------
-    # Generate date dimension
-    # ---------------------------------------------------------
     with stage("Generating Dates"):
-        df = generate_date_table(
-            start_date=start_date,
-            end_date=end_date,
-            first_fy_month=fiscal_start_month
-        )
+        df = generate_date_table(start_date, end_date, fiscal_start_month)
+        df = df[resolve_date_columns(dates_cfg)]
         df.to_parquet(out_path, index=False)
 
     save_version("dates", version_cfg, out_path)
