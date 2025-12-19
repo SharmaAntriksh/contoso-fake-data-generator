@@ -188,7 +188,7 @@ STATIC_SCHEMAS = {
         ("DiscountAmount",       "DECIMAL(10, 4)"),
 
         ("DeliveryStatus",       "VARCHAR(20)"),
-        ("IsOrderDelayed",       "BIT")
+        ("IsOrderDelayed",       "TINYINT")
     ],
 
     "ExchangeRates": [

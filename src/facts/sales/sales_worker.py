@@ -154,14 +154,14 @@ def _stream_write_parquet(table: pa.Table, path: str, compression: str, row_grou
         writer.close()
 
 
-def _try_write_csv_arrow(table: pa.Table, out_path: str) -> bool:
-    """Try Arrow CSV write; fallback to pandas if needed."""
-    try:
-        import pyarrow.csv as pacsv
-        pacsv.write_csv(table, out_path)
-        return True
-    except Exception:
-        return False
+# def _try_write_csv_arrow(table: pa.Table, out_path: str) -> bool:
+#     """Try Arrow CSV write; fallback to pandas if needed."""
+#     try:
+#         import pyarrow.csv as pacsv
+#         pacsv.write_csv(table, out_path)
+#         return True
+#     except Exception:
+#         return False
 
 
 def _ensure_arrow_table(obj):
@@ -226,11 +226,25 @@ def _worker_task(args):
         os.makedirs(State.out_folder, exist_ok=True)
         out_path = os.path.join(State.out_folder, f"sales_chunk{idx:04d}.csv")
 
-        if not _try_write_csv_arrow(table, out_path):
-            table.to_pandas(split_blocks=True).to_csv(out_path, index=False)
+        df = table.to_pandas(split_blocks=True)
+
+        if "IsOrderDelayed" in df.columns:
+            df["IsOrderDelayed"] = (
+                df["IsOrderDelayed"]
+                .fillna(False)      # 🔴 handle NaN
+                .astype(bool)       # 🔴 normalize
+                .astype(int)        # 🔴 emit 0/1
+            )
+
+        df.to_csv(
+            out_path,
+            index=False,
+            encoding="utf-8"
+        )
 
         work(chunk=idx, outfile=out_path)
         return out_path
+
 
     # ------------------------------------------------------------
     # PARQUET MODE

@@ -2,6 +2,7 @@ import shutil
 from pathlib import Path
 import pyarrow.parquet as pq
 from datetime import datetime
+import csv
 
 from src.utils.logging_utils import stage, done, info
 
@@ -97,7 +98,8 @@ def create_final_output_folder(
             df.to_csv(
                 csv_path,
                 index=False,
-                encoding="utf-8"
+                encoding="utf-8",
+                quoting=csv.QUOTE_MINIMAL
             )
 
     elif ff == "deltaparquet":
@@ -192,7 +194,8 @@ def create_final_output_folder(
             df.to_csv(
                 out_file,
                 index=False,
-                encoding="utf-8"
+                encoding="utf-8",
+                quoting=csv.QUOTE_MINIMAL
             )
 
         done("Creating Final Output Folder")
