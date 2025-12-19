@@ -26,17 +26,14 @@ def generate_all_create_tables(dim_folder, fact_folder, output_folder, skip_orde
     # -------------------------
     # Dimensions
     # -------------------------
-    for fname in sorted(os.listdir(dim_folder)):
-        if not fname.lower().endswith(".csv"):
+    for table_name, cols in STATIC_SCHEMAS.items():
+        if table_name == "Sales":
             continue
 
-        base = os.path.splitext(fname)[0]
-        table_name = base.replace("_", " ").title().replace(" ", "_")
+        dim_scripts.append(
+            create_table_from_static_schema(table_name, cols)
+        )
 
-        if table_name in STATIC_SCHEMAS:
-            dim_scripts.append(
-                create_table_from_static_schema(table_name, STATIC_SCHEMAS[table_name])
-            )
 
     # -------------------------
     # Sales Fact Table

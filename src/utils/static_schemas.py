@@ -44,13 +44,13 @@ STATIC_SCHEMAS = {
         ("UnitPrice",               "DECIMAL(10,2)")
     ],
 
-    "Product_Category": [
+    "ProductCategory": [
         ("ProductCategoryKey",      "TINYINT NOT NULL"),
         ("ProductCategoryName",     "VARCHAR(100)"),
         ("CategoryLabel",           "VARCHAR(10)")
     ],
 
-    "Product_Subcategory": [
+    "ProductSubcategory": [
         ("ProductSubcategoryKey",   "TINYINT NOT NULL"),
         ("SubcategoryLabel",        "VARCHAR(10)"),
         ("Subcategory",             "VARCHAR(100)"),
@@ -186,11 +186,11 @@ STATIC_SCHEMAS = {
         ("IsOrderDelayed",       "BIT")
     ],
 
-    "Exchange_Rates": [
+    "ExchangeRates": [
         ("Date",         "DATE"),
         ("FromCurrency", "VARCHAR(10)"),
         ("ToCurrency",   "VARCHAR(10)"),
-        ("ExchangeRate", "DECIMAL(10, 6)")
+        ("Rate", "DECIMAL(10, 6)")
     ]
 }
 
