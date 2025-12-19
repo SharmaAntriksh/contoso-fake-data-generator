@@ -226,23 +226,32 @@ def _worker_task(args):
         os.makedirs(State.out_folder, exist_ok=True)
         out_path = os.path.join(State.out_folder, f"sales_chunk{idx:04d}.csv")
 
-        df = table.to_pandas(split_blocks=True)
+        import pyarrow.compute as pc
+        import pyarrow.csv as pacsv
 
-        if "IsOrderDelayed" in df.columns:
-            df["IsOrderDelayed"] = (
-                df["IsOrderDelayed"]
-                .fillna(False)      # 🔴 handle NaN
-                .astype(bool)       # 🔴 normalize
-                .astype(int)        # 🔴 emit 0/1
-            )
+        import pyarrow.compute as pc
+        import pyarrow as pa
 
-        df.to_csv(
+        if "IsOrderDelayed" in table.column_names:
+            col_idx = table.schema.get_field_index("IsOrderDelayed")
+            col = table.column(col_idx)
+
+            col = pc.fill_null(col, 0)
+            col = pc.cast(col, pa.int8())
+
+            table = table.set_column(col_idx, "IsOrderDelayed", col)
+
+        pacsv.write_csv(
+            table,
             out_path,
-            index=False,
-            encoding="utf-8"
+            write_options=pacsv.WriteOptions(
+                include_header=True,
+                quoting_style="none"
+            )
         )
 
-        work(chunk=idx, outfile=out_path)
+        work(msg=f"Chunk {idx} → {os.path.basename(out_path)}")
+
         return out_path
 
 

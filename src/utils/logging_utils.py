@@ -144,31 +144,20 @@ class stage:
 # ============================================================================
 # ENHANCED WORK LOGGER (For Multiprocessing Workers)
 # ============================================================================
-def work(msg="", *, chunk=None, total=None, outfile=None, **_ignore):
+def work(msg="", *, outfile=None, **_ignore):
     """
-    Simplified WORK logger.
-    Only prints:
-        - timestamp
-        - WORK level
-        - Chunk X/Y
-        - Output path
+    WORK logger (multiprocessing-safe).
+
+    - Message is always authoritative
+    - No hidden state
+    - No ambiguous 'chunk' semantics
     """
 
-    parts = []
-
-    # Always show chunk if provided
-    if chunk is not None:
-        if total is not None:
-            parts.append(f"Chunk {chunk}/{total}")
-        else:
-            parts.append(f"Chunk {chunk}")
-
-    # Auto shorten output paths
-    if outfile:
-        parts.append(f"→ {Path(outfile).name}")
-
-
-    # Build final message
-    final = " | ".join(parts) if parts else msg
+    if msg:
+        final = msg
+    elif outfile:
+        final = f"→ {Path(outfile).name}"
+    else:
+        final = ""
 
     _flush(_line("WORK", final))

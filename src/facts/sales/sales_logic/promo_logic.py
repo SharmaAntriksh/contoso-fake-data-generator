@@ -12,21 +12,25 @@ def apply_promotions(
     if promo_keys_all is None or promo_keys_all.size == 0:
         return promo_keys, promo_pct
 
-    od_exp = order_dates[:, None]
-    start_ok = od_exp >= promo_start_all
-    end_ok = od_exp <= promo_end_all
-    mask_all = start_ok & end_ok
+    # ------------------------------------------------------------
+    # Build active promotion mask (vectorized)
+    # ------------------------------------------------------------
+    od = order_dates[:, None]
+    active_mask = (od >= promo_start_all) & (od <= promo_end_all)
 
-    for i in range(n):
-        active = np.where(mask_all[i])[0]
-        if active.size == 0:
-            continue
+    # Ignore no-discount promos up front
+    valid_mask = active_mask & (promo_keys_all != no_discount_key)
 
-        actual_promos = [j for j in active if promo_keys_all[j] != no_discount_key]
+    # Rows with at least one valid promotion
+    rows = np.nonzero(valid_mask.any(axis=1))[0]
 
-        if actual_promos:
-            idx = rng.choice(actual_promos)
-            promo_keys[i] = promo_keys_all[idx]
-            promo_pct[i] = promo_pct_all[idx]
+    # ------------------------------------------------------------
+    # Select one promo per valid row
+    # ------------------------------------------------------------
+    for i in rows:
+        choices = np.flatnonzero(valid_mask[i])
+        j = rng.choice(choices)
+        promo_keys[i] = promo_keys_all[j]
+        promo_pct[i] = promo_pct_all[j]
 
     return promo_keys, promo_pct

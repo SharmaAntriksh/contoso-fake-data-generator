@@ -133,35 +133,33 @@ def write_delta_partitioned(parts_folder, delta_output_folder, partition_cols):
             "pyarrow fallback is intentionally disabled to avoid corrupted output."
         ) from e
 
-    # Build combined pandas DataFrame in a memory-conscious way:
-    # If dataset is large, this will use memory — consider chunking if needed.
-    import pandas as pd
+    # ------------------------------------------------------------------
+    # Arrow-native concat (NO pandas) — scalable & faster
+    # ------------------------------------------------------------------
+    info(f"[DELTA] Reading {len(part_files)} part files using pyarrow...")
 
-    info(f"[DELTA] Reading {len(part_files)} part files into pandas for concat...")
-    dfs = []
+    tables = []
     for pf in part_files:
         try:
-            dfs.append(pd.read_parquet(pf))
+            tables.append(pq.read_table(pf))
         except Exception as ex:
             raise RuntimeError(f"Failed to read part file {pf}: {ex}") from ex
 
-    # Concatenate
+    # Concatenate Arrow tables
     try:
-        df_combined = pd.concat(dfs, ignore_index=True)
+        combined = pa.concat_tables(tables, promote=True)
     except Exception as ex:
-        raise RuntimeError(f"Failed to concat part-dataframes: {ex}") from ex
+        raise RuntimeError(f"Failed to concat Arrow tables: {ex}") from ex
 
-    # Optional sort for stable partitions
+    # Optional sort for stable partitions (Arrow compute)
     if partition_cols:
-        info(f"[DELTA] Sorting combined dataframe by: {partition_cols}")
+        info(f"[DELTA] Sorting combined table by: {partition_cols}")
         try:
-            df_combined = df_combined.sort_values(by=partition_cols)
-        except Exception:
-            # fallback: convert to pandas again (already pandas) — raise if fails
-            raise
+            sort_keys = [(c, "ascending") for c in partition_cols]
+            combined = combined.sort_by(sort_keys)
+        except Exception as ex:
+            raise RuntimeError(f"Failed to sort Arrow table: {ex}") from ex
 
-    # Convert to Arrow table
-    combined = pa.Table.from_pandas(df_combined, preserve_index=False)
 
     # Final write: single clean delta commit
     # info("[DELTA] Writing real Delta Lake using deltalake.write_deltalake()")
