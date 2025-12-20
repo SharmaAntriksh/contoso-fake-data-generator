@@ -50,7 +50,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     sales_out_folder.mkdir(parents=True, exist_ok=True)
 
     # info(f"Resolved sales output folder = {sales_out_folder}")
-    print("SALES CFG PRICING →", sales_cfg.get("pricing"))
+    # print("SALES CFG PRICING →", sales_cfg.get("pricing"))
     # ------------------------------------------------------------
     # Bind PRICING config into flat State (REQUIRED)
     # ------------------------------------------------------------

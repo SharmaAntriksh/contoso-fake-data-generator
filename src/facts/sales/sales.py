@@ -293,7 +293,7 @@ def generate_sales_fact(
     from src.facts.sales.sales_logic.globals import bind_globals as _bind_globals
 
     pricing_cfg = cfg.get("sales", {}).get("pricing", {})
-    print("DEBUG: pricing_cfg loaded from YAML =", pricing_cfg)
+    # print("DEBUG: pricing_cfg loaded from YAML =", pricing_cfg)
 
     _bind_globals({
         "pricing_mode": pricing_cfg.get("pricing_mode", "random"),

@@ -24,7 +24,7 @@ sales:
   total_rows: 12583000
   chunk_size: 2000000
 
-  file_format: "csv"          # csv | parquet | deltaparquet
+  file_format: "parquet"          # csv | parquet | deltaparquet
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -75,8 +75,8 @@ sales:
 # PRODUCTS
 # ---------------------------------------------------------------------
 products:
-  use_contoso_products: true   # true=Contoso, false=Fake generated
-  num_products: 17301
+  use_contoso_products: false   # true=Contoso, false=Fake generated
+  num_products: 53021
   num_categories: 5            # MAX 15 for now
   num_subcategories: 25        # MAX 75 for now: 15 Category x 5 Subcategory under each category
   seed: 42       # optional: makes fake product generation repeatable
@@ -85,7 +85,7 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 8237
+  total_customers: 1888237
 
   pct_india: 1
   pct_us: 60
@@ -144,7 +144,7 @@ promotions:
 # STORES / RETAIL OUTLETS
 # ---------------------------------------------------------------------
 stores:
-  num_stores: 50
+  num_stores: 50000
 
   opening:
     start: "1995-01-01"

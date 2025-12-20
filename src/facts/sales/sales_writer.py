@@ -147,7 +147,7 @@ def write_delta_partitioned(parts_folder, delta_output_folder, partition_cols):
 
     # Concatenate Arrow tables
     try:
-        combined = pa.concat_tables(tables, promote=True)
+        combined = pa.concat_tables(tables, promote_options="default")
     except Exception as ex:
         raise RuntimeError(f"Failed to concat Arrow tables: {ex}") from ex
 
