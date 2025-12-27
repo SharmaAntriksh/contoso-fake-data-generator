@@ -6,6 +6,7 @@ from src.tools.sql.generate_bulk_insert_sql import generate_bulk_insert_script
 from src.tools.sql.generate_create_table_scripts import generate_all_create_tables
 from src.utils.logging_utils import stage, info, skip, done
 import shutil
+from urllib.parse import unquote
 
 
 def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
@@ -23,7 +24,9 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
     # ---------------------------------------------------------
     with stage("Creating Final Output Folder"):
         final_folder = create_final_output_folder(
-            final_folder_root=Path(cfg["final_output_folder"]),
+            final_folder_root=Path(
+                str(cfg["final_output_folder"]).replace("%20", " ")
+            ).resolve(),
             parquet_dims=parquet_dims,
             fact_folder=fact_out,
             sales_cfg=sales_cfg,
@@ -31,6 +34,23 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
             sales_rows_expected=sales_cfg["total_rows"],
             cfg=cfg
         )
+        # ---------------------------------------------------------
+        # HARD FIX: remove URL-encoded duplicate run folder (%20)
+        # ---------------------------------------------------------
+        parent = final_folder.parent
+        real_name = final_folder.name
+
+        for sibling in parent.iterdir():
+            if not sibling.is_dir():
+                continue
+
+            if "%20" in sibling.name:
+                decoded = unquote(sibling.name)
+
+                # Same logical dataset, encoded name → delete it
+                if decoded == real_name:
+                    info(f"Removing URL-encoded duplicate run folder: {sibling}")
+                    shutil.rmtree(sibling)
 
         dims_out = final_folder / "dimensions"
         facts_out = final_folder / "facts"
@@ -49,7 +69,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
         file_format = sales_cfg["file_format"].lower()
 
         if file_format == "deltaparquet":
-            dst_sales = facts_out / "sales"
+            dst_sales = facts_out / "delta"
             dst_sales.mkdir(parents=True, exist_ok=True)
         else:
             dst_sales = facts_out   # parquet and csv output directly under facts/
@@ -99,24 +119,22 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
 
         info(f"Copying sales fact from: {src_sales}")
 
+        # Full Delta table snapshot copy
         for item in src_sales.iterdir():
-            name = item.name
 
-            # Skip tmp
-            if name == "_tmp_parts":
+            # Skip tmp / transient folders
+            if item.name == "_tmp_parts":
                 continue
 
-            # Copy delta log
-            if name == "_delta_log":
-                shutil.copytree(item, dst_sales / name, dirs_exist_ok=True)
-                continue
+            target = dst_sales / item.name
 
-            # Copy partition folders
-            if name.startswith("Year=") and item.is_dir():
-                shutil.copytree(item, dst_sales / name, dirs_exist_ok=True)
-                continue
+            if item.is_dir():
+                shutil.copytree(item, target, dirs_exist_ok=True)
+            else:
+                shutil.copy2(item, target)
 
-        done("Sales fact copied.")
+
+                done("Sales fact copied.")
 
     # ============================================================
     # SQL SCRIPT GENERATION — ONLY for CSV
