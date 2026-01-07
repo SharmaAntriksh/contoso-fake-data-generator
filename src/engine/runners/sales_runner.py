@@ -56,28 +56,26 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     # ------------------------------------------------------------
     from src.facts.sales.sales_logic.globals import State
 
-    pricing = sales_cfg.get("pricing", {})   # ✅ FIXED
-    decimals = pricing.get("decimals", {})
+    pricing = sales_cfg.get("pricing", {})
 
-    # ---- pricing ----
-    State.pricing_mode = pricing.get("pricing_mode", "random")
-    State.enforce_min_price = pricing.get("enforce_min_price", False)
+    # ---- pricing (simplified) ----
+    State.pricing_mode = pricing.get("mode", "bucketed")
     State.bucket_size = pricing.get("bucket_size", 0.25)
-    State.discrete_factors = pricing.get("discrete_factors", False)
 
-    # ---- decimals (FLAT) ----
-    State.decimals_mode = decimals.get("mode", "off")
-    State.decimals_scale = decimals.get("scale", 0.02)
+    State.min_unit_price = pricing.get("min_unit_price")
+    State.max_unit_price = pricing.get("max_unit_price")
 
-    # ---- retail endings ----
-    State.retail_price_endings = pricing.get("retail_price_endings", False)
+    State.value_scale = pricing.get("value_scale", 1.0)
+
+    # ---- decimals (NOW FLAT STRING) ----
+    State.decimals_mode = pricing.get("decimals", "off")
+    State.decimals_scale = 0.02   # fixed constant, no longer configurable
 
     info(
         f"Pricing bound → mode={State.pricing_mode}, "
         f"decimals={State.decimals_mode}, "
         f"retail_endings={State.retail_price_endings}"
     )
-
 
     # ------------------------------------------------------------
     # Run sales fact builder

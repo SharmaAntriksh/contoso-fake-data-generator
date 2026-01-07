@@ -8,8 +8,8 @@ defaults:
   seed: 42
 
   dates:
-    start: "2020-04-07"
-    end: "2025-07-19"
+    start: "2021-04-07"
+    end: "2025-12-31"
 
   paths:
     geography: "./data/parquet_dims/geography.parquet"
@@ -24,7 +24,7 @@ sales:
   total_rows: 12583
   chunk_size: 2000000
 
-  file_format: "deltaparquet"          # csv | parquet | deltaparquet
+  file_format: "parquet"          # csv | parquet | deltaparquet
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -54,22 +54,15 @@ sales:
     columns: ["Year", "Month"]
 
   pricing:
-    enforce_min_price: true
-    pricing_mode: "bucketed"
+    mode: "bucketed"          # bucketed | discrete | free
     bucket_size: 0.25
-    discrete_factors: false
-
-    value_scale: 0.053
 
     min_unit_price: 10
     max_unit_price: 2000
 
-    retail_price_endings: false 
-    
-    decimals:
-      mode: "micro"          # off | micro | strict
-      scale: 0.04          # max ± adjustment
+    value_scale: 0.60         # <-- ONLY magnitude control
 
+    decimals: "off"         # off | micro | strict
 
 # ---------------------------------------------------------------------
 # PRODUCTS

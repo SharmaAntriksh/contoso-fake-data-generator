@@ -296,14 +296,13 @@ def generate_sales_fact(
     # print("DEBUG: pricing_cfg loaded from YAML =", pricing_cfg)
 
     _bind_globals({
-        "pricing_mode": pricing_cfg.get("pricing_mode", "random"),
-        "enforce_min_price": pricing_cfg.get("enforce_min_price", False),
+        "pricing_mode": pricing_cfg.get("mode", "bucketed"),
         "bucket_size": pricing_cfg.get("bucket_size", 0.25),
-        "discrete_factors": pricing_cfg.get("discrete_factors", False),
-        "discount_bucket_size": pricing_cfg.get("discount_bucket_size", 0.50),
-        "unit_bucket_size": pricing_cfg.get("unit_bucket_size", 1.00),
+        "decimals_mode": pricing_cfg.get("decimals", "off"),
+        "min_unit_price": pricing_cfg.get("min_unit_price"),
+        "max_unit_price": pricing_cfg.get("max_unit_price"),
+        "value_scale": pricing_cfg.get("value_scale", 1.0),
     })
-
 
     # Init args for workers
     initargs = (
@@ -328,14 +327,9 @@ def generate_sales_fact(
         skip_order_cols,
         (file_format == "deltaparquet"),   # partition flag in worker
         partition_cols,
-        pricing_cfg.get("pricing_mode", "random"),
-        pricing_cfg.get("enforce_min_price", False),
+        pricing_cfg.get("mode", "bucketed"),
         pricing_cfg.get("bucket_size", 0.25),
-        pricing_cfg.get("discrete_factors", False),
-        pricing_cfg.get("discount_bucket_size", 0.50),
-        pricing_cfg.get("unit_bucket_size", 1.00),
-        pricing_cfg.get("decimals", {}).get("mode", "off"),
-        pricing_cfg.get("decimals", {}).get("scale", 0.02),
+        pricing_cfg.get("decimals", "off"),
         pricing_cfg.get("max_unit_price"),
         pricing_cfg.get("min_unit_price"),
         pricing_cfg.get("value_scale", 1.0),

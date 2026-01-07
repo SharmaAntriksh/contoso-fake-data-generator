@@ -38,17 +38,13 @@ def init_sales_worker(
     partition_enabled,
     partition_cols,
     pricing_mode,
-    enforce_min_price,
     bucket_size,
-    discrete_factors,
-    discount_bucket_size,
-    unit_bucket_size,
     decimals_mode,
-    decimals_scale,
     max_unit_price,
     min_unit_price,
     value_scale,
 ):
+
     """
     Initialize global state using the new 'State' container.
     Called once per worker at pool startup.
@@ -110,14 +106,8 @@ def init_sales_worker(
         "partition_cols": partition_cols,
 
         "pricing_mode": pricing_mode,
-        "enforce_min_price": enforce_min_price,
         "bucket_size": bucket_size,
-        "discrete_factors": discrete_factors,
-        "discount_bucket_size": discount_bucket_size,
-        "unit_bucket_size": unit_bucket_size,
-
         "decimals_mode": decimals_mode,
-        "decimals_scale": decimals_scale,
         "max_unit_price": max_unit_price,
         "min_unit_price": min_unit_price,
         "value_scale": value_scale,
