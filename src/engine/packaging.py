@@ -69,7 +69,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
         file_format = sales_cfg["file_format"].lower()
 
         if file_format == "deltaparquet":
-            dst_sales = facts_out / "delta"
+            dst_sales = facts_out / "sales"
             dst_sales.mkdir(parents=True, exist_ok=True)
         else:
             dst_sales = facts_out   # parquet and csv output directly under facts/
@@ -96,7 +96,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
         # Other formats: deltaparquet or csv (folder copy)
         # ---------------------------------------------------------
         if file_format == "deltaparquet":
-            src_sales = fact_out / "delta"
+            src_sales = fact_out / "sales"
         else:
             src_sales = fact_out / "csv"
 

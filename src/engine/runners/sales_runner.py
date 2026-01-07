@@ -41,8 +41,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     elif fmt == "parquet":
         sales_out_folder = Path(fact_out) / "parquet"
     else:  # deltaparquet
-        delta_raw = sales_cfg.get("delta_output_folder")
-        sales_out_folder = (fact_out / (delta_raw or "delta")).resolve()
+        sales_out_folder = (fact_out / "sales").resolve()
 
     # Clean output folder every run
     if sales_out_folder.exists():
