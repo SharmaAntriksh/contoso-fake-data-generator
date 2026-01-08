@@ -327,10 +327,12 @@ def generate_sales_fact(
 
             if isinstance(result, str):
                 created_files.append(result)
+                work(f"→ {os.path.basename(result)}")
                 continue
 
             if isinstance(result, dict) and "delta_part" in result:
                 delta_part_paths.append(result["delta_part"])
+                work(f"→ {os.path.basename(result['delta_part'])}")
                 continue
 
             info(f"Worker returned unexpected result: {result}")
