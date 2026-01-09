@@ -31,7 +31,7 @@ DISCOUNT_LADDER = [
 # Helpers
 # -------------------------------------------------
 def _quantize(values, decimals=4):
-    return np.round(values.astype(np.float64), decimals)
+    return np.round(values.astype(np.float64, copy=False), decimals)
 
 
 def compute_prices(
@@ -42,22 +42,13 @@ def compute_prices(
     promo_pct=0.0,
 ):
     """
-    Simple, deterministic price realization.
+    Deterministic, vectorized price realization.
 
-    Inputs (authoritative):
-    - unit_price : from products.parquet
-    - unit_cost  : from products.parquet
-
-    Applies:
-    - discount ladder
+    Preserves:
+    - discount ladder semantics
     - loss-leader protection
-
-    Does NOT:
-    - rescale base prices
-    - clamp catalog prices
+    - rounding rules
     """
-
-    S = State
 
     # -------------------------------------------------
     # 1. AUTHORITATIVE BASE VALUES
@@ -69,31 +60,40 @@ def compute_prices(
     cost = np.clip(cost, 0, base_price)
 
     # -------------------------------------------------
-    # 2. DISCOUNT LADDER
+    # 2. DISCOUNT LADDER (FULLY VECTORIZED)
     # -------------------------------------------------
     types, values, weights = zip(*DISCOUNT_LADDER)
+
     weights = np.asarray(weights, dtype=np.float64)
     weights /= weights.sum()
 
-    choices = rng.choice(len(DISCOUNT_LADDER), size=n, p=weights)
+    values = np.asarray(values, dtype=np.float64)
+    is_pct = np.array([t == "pct" for t in types], dtype=bool)
+    is_abs = np.array([t == "abs" for t in types], dtype=bool)
+    # "none" implicitly handled (zero)
+
+    choices = rng.choice(len(values), size=n, p=weights)
+
     discount_amt = np.zeros(n, dtype=np.float64)
 
-    for i, idx in enumerate(choices):
-        t = types[idx]
-        v = values[idx]
+    # Percentage discounts
+    pct_mask = is_pct[choices]
+    if pct_mask.any():
+        discount_amt[pct_mask] = (
+            base_price[pct_mask] * values[choices[pct_mask]]
+        )
 
-        if t == "pct":
-            discount_amt[i] = base_price[i] * v
-        elif t == "abs":
-            discount_amt[i] = v
-        # "none" → 0
+    # Absolute discounts
+    abs_mask = is_abs[choices]
+    if abs_mask.any():
+        discount_amt[abs_mask] = values[choices[abs_mask]]
 
     # -------------------------------------------------
     # 3. NET PRICE (PRE-SAFETY)
     # -------------------------------------------------
     net_price = base_price - discount_amt
 
-    # PROMOTIONAL DISCOUNT (VECTORISED)
+    # Promotional discount (vectorized)
     net_price = net_price * (1.0 - promo_pct)
 
     # -------------------------------------------------
@@ -106,12 +106,12 @@ def compute_prices(
     discount_amt = base_price - net_price
 
     # -------------------------------------------------
-    # 7. FINAL SAFETY
+    # 5. FINAL SAFETY
     # -------------------------------------------------
     cost = np.minimum(cost, net_price)
 
     # -------------------------------------------------
-    # 8. FINAL ROUNDING (AUTHORITATIVE)
+    # 6. FINAL ROUNDING (AUTHORITATIVE)
     # -------------------------------------------------
     final_unit_price = _quantize(base_price, decimals=2)
     final_net_price = _quantize(net_price, decimals=2)

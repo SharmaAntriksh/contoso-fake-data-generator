@@ -11,27 +11,30 @@ def build_orders(
     order_count = max(1, int(n / avg_lines))
 
     # ------------------------------------------------------------
-    # Generate order-level data
+    # Order-level data
     # ------------------------------------------------------------
 
-    # Order dates
-    od_idx = rng.choice(len(date_pool), size=order_count, p=date_prob)
+    # Order dates (vectorized)
+    od_idx = rng.choice(_len_date_pool, size=order_count, p=date_prob)
     order_dates = date_pool[od_idx]
 
-    # YYYYMMDD → int
+    # YYYYMMDD → int64 (vectorized string ops)
     date_str = np.datetime_as_string(order_dates, unit="D")
-    date_str = np.char.replace(date_str, "-", "")
-    date_int = date_str.astype(np.int64)
+    date_int = np.char.replace(date_str, "-", "").astype(np.int64)
 
-    # Per-order random suffix (per order, not per chunk)
-    suffix_int = rng.integers(0, 1_000_000_000, order_count, dtype=np.int64)
+    # Per-order random suffix
+    suffix_int = rng.integers(
+        0, 1_000_000_000,
+        size=order_count,
+        dtype=np.int64
+    )
 
-    # ✅ Numeric, per-order, globally unique SalesOrderNumber
+    # Globally unique numeric order id
     order_ids_int = date_int * 1_000_000_000 + suffix_int
 
     # One customer per order
-    cust_idx = rng.integers(0, len(customers), order_count)
-    order_customers = customers[cust_idx].astype(np.int64)
+    cust_idx = rng.integers(0, _len_customers, size=order_count)
+    order_customers = customers[cust_idx].astype(np.int64, copy=False)
 
     # ------------------------------------------------------------
     # Lines per order
@@ -39,45 +42,48 @@ def build_orders(
 
     lines_per_order = rng.choice(
         [1, 2, 3, 4, 5],
-        order_count,
-        p=[0.55, 0.25, 0.10, 0.06, 0.04]
+        size=order_count,
+        p=[0.55, 0.25, 0.10, 0.06, 0.04],
     )
 
-    expanded_len = lines_per_order.sum()
+    expanded_len = int(lines_per_order.sum())
 
-    starts = np.repeat(
-        np.cumsum(lines_per_order) - lines_per_order,
-        lines_per_order
-    )
-    line_num = (np.arange(expanded_len) - starts + 1).astype(np.int64)
+    # Start index for each order block
+    order_starts = np.cumsum(lines_per_order) - lines_per_order
 
+    # Expand arrays
     sales_order_num_int = np.repeat(order_ids_int, lines_per_order)
-    customer_keys = np.repeat(order_customers, lines_per_order).astype(np.int64)
+    customer_keys = np.repeat(order_customers, lines_per_order)
     order_dates_expanded = np.repeat(order_dates, lines_per_order)
 
+    # Line numbers (1..N per order)
+    line_num = (
+        np.arange(expanded_len) -
+        np.repeat(order_starts, lines_per_order) +
+        1
+    ).astype(np.int64)
+
     # ------------------------------------------------------------
-    # Pad if needed (REPEAT existing rows, never invent orders)
+    # Pad if needed (repeat existing rows, never invent orders)
     # ------------------------------------------------------------
-    curr_len = len(sales_order_num_int)
+
+    curr_len = expanded_len
     if curr_len < n:
         extra = n - curr_len
+        sl = slice(0, extra)
 
-        sales_order_num_int = np.concatenate([
-            sales_order_num_int,
-            sales_order_num_int[:extra]
-        ])
-        line_num = np.concatenate([
-            line_num,
-            line_num[:extra]
-        ])
-        customer_keys = np.concatenate([
-            customer_keys,
-            customer_keys[:extra]
-        ])
-        order_dates_expanded = np.concatenate([
-            order_dates_expanded,
-            order_dates_expanded[:extra]
-        ])
+        sales_order_num_int = np.concatenate(
+            (sales_order_num_int, sales_order_num_int[sl])
+        )
+        line_num = np.concatenate(
+            (line_num, line_num[sl])
+        )
+        customer_keys = np.concatenate(
+            (customer_keys, customer_keys[sl])
+        )
+        order_dates_expanded = np.concatenate(
+            (order_dates_expanded, order_dates_expanded[sl])
+        )
 
     # ------------------------------------------------------------
     # Trim to exactly n rows
@@ -89,20 +95,20 @@ def build_orders(
     order_dates_expanded = order_dates_expanded[:n]
 
     # ------------------------------------------------------------
-    # Output (skip_cols controls schema ONLY)
+    # Output (schema controlled by skip_cols ONLY)
     # ------------------------------------------------------------
 
     result = {
         "customer_keys": customer_keys,
-        "order_dates": order_dates_expanded.astype("datetime64[D]")
+        "order_dates": order_dates_expanded.astype("datetime64[D]", copy=False),
     }
 
     if skip_cols:
+        # keep downstream compatibility
         result["order_ids_str"] = np.full(n, "", dtype=object)
     else:
         result["order_ids_int"] = sales_order_num_int
         result["line_num"] = line_num
-        # compatibility for remaining pipeline
         result["order_ids_str"] = sales_order_num_int.astype(str)
 
     return result
