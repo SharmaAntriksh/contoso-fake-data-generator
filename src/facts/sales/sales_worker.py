@@ -237,43 +237,79 @@ def _write_csv(table: pa.Table, path: str):
 
 
 # ===============================================================
-# Worker task
+# Worker task (supports batched chunks)
 # ===============================================================
 
 def _worker_task(args):
-    idx, batch_size, seed = args
+    """
+    Supports:
+      - single task: (idx, batch_size, seed)
+      - batched tasks: [(idx, batch_size, seed), ...]
+    """
 
-    base_seed = int(seed) if seed is not None else 0
-    chunk_seed = base_seed + idx * 10_000
+    # -----------------------------------------------------------
+    # Normalize input to a list of tasks
+    # -----------------------------------------------------------
+    if isinstance(args, tuple):
+        tasks = [args]
+        single = True
+    else:
+        tasks = args
+        single = False
 
-    table = chunk_builder.build_chunk_table(
-        batch_size,
-        chunk_seed,
-        no_discount_key=State.no_discount_key,
-    )
+    results = []
 
-    if not isinstance(table, pa.Table):
-        raise TypeError("chunk_builder must return pyarrow.Table")
+    # -----------------------------------------------------------
+    # Process each chunk in this worker call
+    # -----------------------------------------------------------
+    for idx, batch_size, seed in tasks:
+        base_seed = int(seed) if seed is not None else 0
+        chunk_seed = base_seed + idx * 10_000
 
-    # DELTA
-    if State.file_format == "deltaparquet":
-        out_name = f"delta_part_{idx:04d}.parquet"
-        out_path = os.path.join(State.delta_output_folder, "_tmp_parts", out_name)
+        table = chunk_builder.build_chunk_table(
+            batch_size,
+            chunk_seed,
+            no_discount_key=State.no_discount_key,
+        )
 
+        if not isinstance(table, pa.Table):
+            raise TypeError("chunk_builder must return pyarrow.Table")
+
+        # DELTA
+        if State.file_format == "deltaparquet":
+            out_name = f"delta_part_{idx:04d}.parquet"
+            out_path = os.path.join(
+                State.delta_output_folder, "_tmp_parts", out_name
+            )
+
+            _write_parquet_batches(table, out_path)
+            rows = table.num_rows
+            del table
+            results.append({"part": out_name, "rows": rows})
+            continue
+
+        # CSV
+        if State.file_format == "csv":
+            out_path = os.path.join(
+                State.out_folder, f"sales_chunk{idx:04d}.csv"
+            )
+            _write_csv(table, out_path)
+            del table
+            results.append(out_path)
+            continue
+
+        # PARQUET
+        out_path = os.path.join(
+            State.out_folder, f"sales_chunk{idx:04d}.parquet"
+        )
         _write_parquet_batches(table, out_path)
-        rows = table.num_rows
         del table
-        return {"part": out_name, "rows": rows}
+        results.append(out_path)
 
-    # CSV
-    if State.file_format == "csv":
-        out_path = os.path.join(State.out_folder, f"sales_chunk{idx:04d}.csv")
-        _write_csv(table, out_path)
-        del table
-        return out_path
+    # -----------------------------------------------------------
+    # Preserve backward compatibility
+    # -----------------------------------------------------------
+    if single:
+        return results[0]
 
-    # PARQUET
-    out_path = os.path.join(State.out_folder, f"sales_chunk{idx:04d}.parquet")
-    _write_parquet_batches(table, out_path)
-    del table
-    return out_path
+    return results

@@ -93,6 +93,14 @@ def suggest_chunk_size(total_rows, target_workers=None, preferred_chunks_per_wor
     return max(1_000, int(ceil(total_rows / desired_chunks)))
 
 
+def batch_tasks(tasks, batch_size):
+    """Group tasks into batches of size N."""
+    return [
+        tasks[i : i + batch_size]
+        for i in range(0, len(tasks), batch_size)
+    ]
+
+
 # =====================================================================
 # Main Fact Generation
 # =====================================================================
@@ -276,20 +284,42 @@ def generate_sales_fact(
     created_files = []
 
     # ------------------------------------------------------------
-    # MULTIPROCESSING
+    # MULTIPROCESSING (BATCHED CHUNKS)
     # ------------------------------------------------------------
+    CHUNKS_PER_CALL = 2  # safe default (2–3 usually optimal)
+
+    batched_tasks = batch_tasks(tasks, CHUNKS_PER_CALL)
+
+    total_units = len(tasks)
+    completed_units = 0
+
     with Pool(
         processes=n_workers,
         initializer=init_sales_worker,
         initargs=initargs
     ) as pool:
 
-        completed = 0
-        for result in pool.imap_unordered(_worker_task, tasks):
-            completed += 1
-            if isinstance(result, str):
-                created_files.append(result)
-                work(f"[{completed}/{len(tasks)}] → {os.path.basename(result)}")
+        for result in pool.imap_unordered(_worker_task, batched_tasks):
+            # result can be:
+            #   - single value (backward compat)
+            #   - list of results (batched)
+            if isinstance(result, list):
+                for r in result:
+                    completed_units += 1
+                    if isinstance(r, str):
+                        created_files.append(r)
+                        work(
+                            f"[{completed_units}/{total_units}] → "
+                            f"{os.path.basename(r)}"
+                        )
+            else:
+                completed_units += 1
+                if isinstance(result, str):
+                    created_files.append(result)
+                    work(
+                        f"[{completed_units}/{total_units}] → "
+                        f"{os.path.basename(result)}"
+                    )
 
     done("All chunks completed.")
 
