@@ -8,21 +8,24 @@ from .promo_logic import apply_promotions
 from .price_logic import compute_prices
 
 
-def build_chunk_table(n, seed, no_discount_key=1):
+def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     """
-    Build n synthetic sales rows.
-    All shared state is read from `State`.
+    Build `n` synthetic sales rows.
+    All shared, immutable state is read from `State`.
     """
-    
+
     if not PA_AVAILABLE:
         raise RuntimeError("pyarrow is required")
 
     rng = np.random.default_rng(seed)
 
     # ------------------------------------------------------------
-    # Pull immutable state once
+    # Pull immutable state ONCE (important for multiprocessing)
     # ------------------------------------------------------------
     skip_cols = State.skip_order_cols
+    if skip_cols not in (True, False):
+        raise RuntimeError("State.skip_order_cols must be a boolean")
+
     product_np = State.product_np
     customers = State.customers
     date_pool = State.date_pool
@@ -38,9 +41,10 @@ def build_chunk_table(n, seed, no_discount_key=1):
     g2c_arr = State.geo_to_currency_arr
 
     file_format = State.file_format
+    schema = State.sales_schema
 
     # ------------------------------------------------------------
-    # Validation
+    # Validation (fail fast)
     # ------------------------------------------------------------
     if date_pool is None:
         raise RuntimeError("State.date_pool is None")
@@ -48,14 +52,18 @@ def build_chunk_table(n, seed, no_discount_key=1):
         raise RuntimeError("State.product_np is None")
     if store_keys is None:
         raise RuntimeError("State.store_keys is None")
+    if st2g_arr is None or g2c_arr is None:
+        raise RuntimeError(
+            "Dense store_to_geo_arr / geo_to_currency_arr not initialized"
+        )
 
-    _len_products = len(product_np)
-    _len_store_keys = len(store_keys)
+    # Cache schema types once (big win)
+    schema_types = {f.name: f.type for f in schema}
 
     # ------------------------------------------------------------
     # PRODUCTS
     # ------------------------------------------------------------
-    prod_idx = rng.integers(0, _len_products, size=n)
+    prod_idx = rng.integers(0, len(product_np), size=n)
     prods = product_np[prod_idx]
 
     product_keys = prods[:, 0]
@@ -66,16 +74,17 @@ def build_chunk_table(n, seed, no_discount_key=1):
     # STORE → GEO → CURRENCY
     # ------------------------------------------------------------
     store_key_arr = store_keys[
-        rng.integers(0, _len_store_keys, size=n)
-    ].astype(np.int64, copy=False)
+        rng.integers(0, len(store_keys), size=n)
+    ]
 
-    if st2g_arr is None or g2c_arr is None:
-        raise RuntimeError(
-            "Dense store_to_geo_arr / geo_to_currency_arr not initialized."
-        )
+    if store_key_arr.dtype != np.int64:
+        store_key_arr = store_key_arr.astype(np.int64, copy=False)
 
     geo_arr = st2g_arr[store_key_arr]
-    currency_arr = g2c_arr[geo_arr].astype(np.int64, copy=False)
+    currency_arr = g2c_arr[geo_arr]
+
+    if currency_arr.dtype != np.int64:
+        currency_arr = currency_arr.astype(np.int64, copy=False)
 
     # ------------------------------------------------------------
     # ORDERS (ONLY if enabled)
@@ -99,18 +108,17 @@ def build_chunk_table(n, seed, no_discount_key=1):
         line_num = orders["line_num"]
 
     else:
-        # Minimal replacements when order columns are skipped
         customer_keys = customers[
             rng.integers(0, len(customers), size=n)
         ]
-        order_dates = rng.choice(
-            date_pool, size=n, p=date_prob
-        )
+        order_dates = date_pool[
+            rng.integers(0, len(date_pool), size=n)
+        ]
 
         order_ids_int = None
         line_num = None
 
-    # Preserve edge pinning behavior
+    # Edge pinning: guarantees boundary coverage
     order_dates[0] = date_pool[0]
     order_dates[-1] = date_pool[-1]
 
@@ -158,50 +166,56 @@ def build_chunk_table(n, seed, no_discount_key=1):
     )
 
     # ------------------------------------------------------------
-    # YEAR / MONTH
+    # YEAR / MONTH (partitioning only)
     # ------------------------------------------------------------
-    months = order_dates.astype("datetime64[M]").astype("int64")
-    year_arr = (months // 12 + 1970).astype("int16")
-    month_arr = (months % 12 + 1).astype("int8")
+    if file_format == "deltaparquet":
+        months = order_dates.astype("datetime64[M]").astype("int64")
+        year_arr = (months // 12 + 1970).astype("int16")
+        month_arr = (months % 12 + 1).astype("int8")
 
     # ------------------------------------------------------------
-    # Arrow output
+    # Arrow output (schema-driven, deterministic)
     # ------------------------------------------------------------
     arrays = []
-    schema = State.sales_schema
 
     def add(name, data):
         arrays.append(
             pa.array(
                 data,
-                type=schema.field(name).type,
+                type=schema_types[name],
                 safe=False,
             )
         )
 
+    # Order columns (conditional)
     if not skip_cols:
         add("SalesOrderNumber", order_ids_int)
         add("SalesOrderLineNumber", line_num)
 
+    # Keys
     add("CustomerKey", customer_keys)
     add("ProductKey", product_keys)
     add("StoreKey", store_key_arr)
     add("PromotionKey", promo_keys)
     add("CurrencyKey", currency_arr)
 
+    # Dates
     add("OrderDate", order_dates)
     add("DueDate", due_date)
     add("DeliveryDate", delivery_date)
 
+    # Measures
     add("Quantity", qty)
     add("NetPrice", price["final_net_price"])
     add("UnitCost", price["final_unit_cost"])
     add("UnitPrice", price["final_unit_price"])
     add("DiscountAmount", price["discount_amt"])
 
+    # Status
     add("DeliveryStatus", delivery_status)
     add("IsOrderDelayed", is_order_delayed)
 
+    # Partitioning
     if file_format == "deltaparquet":
         add("Year", year_arr)
         add("Month", month_arr)
