@@ -13,30 +13,33 @@ from .sales_logic.globals import State, bind_globals
 # Worker initializer (runs once per process)
 # ===============================================================
 
-def init_sales_worker(
-    product_np,
-    store_keys,
-    promo_keys_all,
-    promo_pct_all,
-    promo_start_all,
-    promo_end_all,
-    customers,
-    store_to_geo,
-    geo_to_currency,
-    date_pool,
-    date_prob,
-    out_folder,
-    file_format,
-    row_group_size,
-    compression,
-    no_discount_key,
-    delta_output_folder,
-    write_delta,
-    skip_order_cols,
-    partition_enabled,
-    partition_cols,
-):
+def init_sales_worker(worker_cfg: dict):
     """Initialize immutable worker state."""
+    
+    product_np = worker_cfg["product_np"]
+    store_keys = worker_cfg["store_keys"]
+    promo_keys_all = worker_cfg["promo_keys_all"]
+    promo_pct_all = worker_cfg["promo_pct_all"]
+    promo_start_all = worker_cfg["promo_start_all"]
+    promo_end_all = worker_cfg["promo_end_all"]
+    customers = worker_cfg["customers"]
+    store_to_geo = worker_cfg["store_to_geo"]
+    geo_to_currency = worker_cfg["geo_to_currency"]
+    date_pool = worker_cfg["date_pool"]
+    date_prob = worker_cfg["date_prob"]
+
+    out_folder = worker_cfg["out_folder"]
+    file_format = worker_cfg["file_format"]
+    row_group_size = worker_cfg["row_group_size"]
+    compression = worker_cfg["compression"]
+
+    no_discount_key = worker_cfg["no_discount_key"]
+    delta_output_folder = worker_cfg["delta_output_folder"]
+    write_delta = worker_cfg["write_delta"]
+
+    skip_order_cols = worker_cfg["skip_order_cols"]
+    partition_enabled = worker_cfg["partition_enabled"]
+    partition_cols = worker_cfg["partition_cols"]
 
     def _dense_map(mapping: dict):
         if not mapping:
@@ -156,7 +159,8 @@ def init_sales_worker(
         # parquet
         "parquet_dict_exclude": {"SalesOrderNumber", "CustomerKey"},
     })
-
+    
+    State.seal()
 
 # ===============================================================
 # Helpers
@@ -181,10 +185,14 @@ def _select_schema():
 # ===============================================================
 
 def _write_parquet_batches(table: pa.Table, path: str):
-    schema = _select_schema()
+
+    schema = State.sales_schema
 
     if table.schema != schema:
-        table = table.cast(schema, safe=False)
+        raise RuntimeError(
+            "Schema mismatch in parquet writer.\n"
+            f"Expected:\n{schema}\n\nGot:\n{table.schema}"
+        )
 
     dict_cols = [
         c for c in table.column_names
@@ -214,10 +222,13 @@ def _write_csv(table: pa.Table, path: str):
     import pyarrow.compute as pc
     import pyarrow.csv as pacsv
 
-    schema = _select_schema()
+    schema = State.sales_schema
 
     if table.schema != schema:
-        table = table.cast(schema, safe=False)
+        raise RuntimeError(
+            "Schema mismatch in CSV writer.\n"
+            f"Expected:\n{schema}\n\nGot:\n{table.schema}"
+        )
 
     if "IsOrderDelayed" in table.column_names:
         table = table.set_column(

@@ -40,9 +40,13 @@ def generate_product_dimension(config, output_folder: Path):
     if regen_prod and not started:
         info("Starting Product Dimension")
         started = True
-
+    
+    regenerated = regen_cat or regen_sub or regen_prod
+    
     return {
         "category": df_cat,
         "subcategory": df_sub,
         "product": df_prod,
+        "_regenerated": regenerated,
     }
+

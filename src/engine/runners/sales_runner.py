@@ -8,6 +8,7 @@ from src.utils.logging_utils import stage, skip, info, done
 from src.engine.dimension_loader import load_dimension
 from src.versioning.version_store import should_regenerate, save_version
 from src.engine.packaging import package_output
+from src.facts.sales.sales_logic.globals import bind_globals
 
 
 def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
@@ -19,6 +20,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     - Sales applies discounts, promotions, and safety guards only
     - No catalog price shaping happens here
     """
+    info(f"DEBUG full sales_cfg = {sales_cfg}")
 
     # ------------------------------------------------------------
     # Resolve and normalize key paths
@@ -58,6 +60,11 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     stage("Generating Sales")
     t0 = time.time()
 
+    bind_globals({
+        "skip_order_cols": sales_cfg.get("skip_order_cols", False),
+    })
+    info(f"DEBUG skip_order_cols from config = {sales_cfg.get('skip_order_cols')}")
+
     generate_sales_fact(
         cfg,
         parquet_folder=str(parquet_folder),
@@ -71,7 +78,9 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
         partition_enabled=sales_cfg.get("partition_enabled", False),
         partition_cols=sales_cfg.get("partition_cols", ["Year", "Month"]),
         delta_output_folder=str(sales_out_folder),
-        skip_order_cols=sales_cfg.get("skip_order_cols", False)
+        skip_order_cols = bool(
+            sales_cfg.get("skip_order_cols", True)
+        )
     )
 
     done(f"Generating Sales completed in {time.time() - t0:.1f}s")

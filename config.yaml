@@ -21,10 +21,10 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 10525830
+  total_rows: 10525
   chunk_size: 1000000
 
-  file_format: "csv"          # csv | parquet | deltaparquet
+  file_format: "parquet"          # csv | parquet | deltaparquet
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -32,7 +32,7 @@ sales:
   merged_file: "sales.parquet"
   delete_chunks: true
 
-  row_group_size: 100000
+  row_group_size: 2000000
   compression: "snappy"
 
   heavy_pct: 5

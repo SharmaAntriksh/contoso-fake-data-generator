@@ -13,6 +13,7 @@ def build_chunk_table(n, seed, no_discount_key=1):
     Build n synthetic sales rows.
     All shared state is read from `State`.
     """
+    
     if not PA_AVAILABLE:
         raise RuntimeError("pyarrow is required")
 
@@ -39,7 +40,7 @@ def build_chunk_table(n, seed, no_discount_key=1):
     file_format = State.file_format
 
     # ------------------------------------------------------------
-    # Validation (unchanged behavior)
+    # Validation
     # ------------------------------------------------------------
     if date_pool is None:
         raise RuntimeError("State.date_pool is None")
@@ -52,7 +53,7 @@ def build_chunk_table(n, seed, no_discount_key=1):
     _len_store_keys = len(store_keys)
 
     # ------------------------------------------------------------
-    # PRODUCTS (vectorized)
+    # PRODUCTS
     # ------------------------------------------------------------
     prod_idx = rng.integers(0, _len_products, size=n)
     prods = product_np[prod_idx]
@@ -62,7 +63,7 @@ def build_chunk_table(n, seed, no_discount_key=1):
     unit_cost = prods[:, 2].astype(np.float64, copy=False)
 
     # ------------------------------------------------------------
-    # STORE → GEO → CURRENCY (pure NumPy)
+    # STORE → GEO → CURRENCY
     # ------------------------------------------------------------
     store_key_arr = store_keys[
         rng.integers(0, _len_store_keys, size=n)
@@ -77,31 +78,39 @@ def build_chunk_table(n, seed, no_discount_key=1):
     currency_arr = g2c_arr[geo_arr].astype(np.int64, copy=False)
 
     # ------------------------------------------------------------
-    # ORDERS
+    # ORDERS (ONLY if enabled)
     # ------------------------------------------------------------
-    orders = build_orders(
-        rng=rng,
-        n=n,
-        skip_cols=skip_cols,
-        date_pool=date_pool,
-        date_prob=date_prob,
-        customers=customers,
-        product_keys=product_keys,
-        _len_date_pool=len(date_pool),
-        _len_customers=len(customers),
-    )
-
-    customer_keys = orders["customer_keys"]
-    order_dates = orders["order_dates"]
-
     if not skip_cols:
+        orders = build_orders(
+            rng=rng,
+            n=n,
+            skip_cols=False,
+            date_pool=date_pool,
+            date_prob=date_prob,
+            customers=customers,
+            product_keys=product_keys,
+            _len_date_pool=len(date_pool),
+            _len_customers=len(customers),
+        )
+
+        customer_keys = orders["customer_keys"]
+        order_dates = orders["order_dates"]
         order_ids_int = orders["order_ids_int"]
         line_num = orders["line_num"]
+
     else:
+        # Minimal replacements when order columns are skipped
+        customer_keys = customers[
+            rng.integers(0, len(customers), size=n)
+        ]
+        order_dates = rng.choice(
+            date_pool, size=n, p=date_prob
+        )
+
         order_ids_int = None
         line_num = None
 
-    # preserve edge pinning behavior
+    # Preserve edge pinning behavior
     order_dates[0] = date_pool[0]
     order_dates[-1] = date_pool[-1]
 
@@ -149,24 +158,26 @@ def build_chunk_table(n, seed, no_discount_key=1):
     )
 
     # ------------------------------------------------------------
-    # YEAR / MONTH (computed once)
+    # YEAR / MONTH
     # ------------------------------------------------------------
     months = order_dates.astype("datetime64[M]").astype("int64")
     year_arr = (months // 12 + 1970).astype("int16")
     month_arr = (months % 12 + 1).astype("int8")
 
     # ------------------------------------------------------------
-    # Arrow output (NO schema inference)
+    # Arrow output
     # ------------------------------------------------------------
     arrays = []
     schema = State.sales_schema
 
     def add(name, data):
-        arrays.append(pa.array(
-            data,
-            type=schema.field(name).type,
-            safe=False
-        ))
+        arrays.append(
+            pa.array(
+                data,
+                type=schema.field(name).type,
+                safe=False,
+            )
+        )
 
     if not skip_cols:
         add("SalesOrderNumber", order_ids_int)

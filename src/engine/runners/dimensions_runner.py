@@ -81,10 +81,14 @@ def generate_dimensions(cfg: dict, parquet_dims_folder: Path):
 
     # 5 Products (static category/subcategory + generated products)
     #     Not date-dependent; pricing is scenario-based, not time-based
-    from src.utils.logging_utils import stage
+    from src.utils.logging_utils import done, skip
 
-    with stage("Generating Product Dimension"):
-        run_products(cfg, parquet_dims_folder)
+    products = run_products(cfg, parquet_dims_folder)
+
+    if products.get("_regenerated"):
+        done("Generating Product Dimension completed")
+    else:
+        skip("Product Dimension up-to-date; skipping.")
 
     # 6 Dates (obviously date-dependent) — include defaults.dates
     cfg_for = _cfg_with_global_dates(cfg, "dates")

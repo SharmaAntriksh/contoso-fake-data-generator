@@ -1,120 +1,180 @@
+from __future__ import annotations
+
 import copy
 import json
 import yaml
-from datetime import datetime
 from pathlib import Path
+from typing import Dict, Any
 
 
-def load_config_file(path):
+# ============================================================
+# Public API
+# ============================================================
+
+def load_config_file(path: str | Path) -> Dict[str, Any]:
     """
-    Load config from a JSON or YAML file.
-    Auto-detects format based on extension.
+    Load a config file (YAML or JSON).
+    Format is detected by extension, with a safe fallback.
     """
     path = Path(path)
+
+    if not path.exists():
+        raise FileNotFoundError(path)
+
     ext = path.suffix.lower()
 
-    if ext in (".yaml", ".yml"):
-        with open(path, "r", encoding="utf-8") as f:
+    with path.open("r", encoding="utf-8") as f:
+        if ext in (".yaml", ".yml"):
             return yaml.safe_load(f)
-
-    if ext == ".json":
-        with open(path, "r", encoding="utf-8") as f:
+        if ext == ".json":
             return json.load(f)
 
-    # auto-detect fallback
-    with open(path, "r", encoding="utf-8") as f:
-        txt = f.read().strip()
+        # Fallback auto-detection
+        text = f.read().strip()
         try:
-            return yaml.safe_load(txt)
+            return yaml.safe_load(text)
         except Exception:
-            return json.loads(txt)
+            return json.loads(text)
 
 
-def load_config(cfg):
+def load_config(raw_cfg: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Returns a dict of fully-resolved module configs.
-    Also injects real global defaults under _defaults.
-    """
-    resolved = {}
-    defaults = cfg.get("defaults", {})
+    Resolve all module configs.
 
-    for section_name, section in cfg.items():
+    Precedence:
+        defaults  →  module section  →  override
+
+    Output:
+        {
+            <module>: resolved_config,
+            ...
+            "_defaults": defaults
+        }
+    """
+    if not isinstance(raw_cfg, dict):
+        raise TypeError("Config root must be a dict")
+
+    defaults = raw_cfg.get("defaults", {})
+    resolved: Dict[str, Any] = {}
+
+    for section_name, section_cfg in raw_cfg.items():
         if section_name == "defaults":
             continue
 
-        # Skip non-dict values (simple string fields)
-        if not isinstance(section, dict):
-            resolved[section_name] = section
+        # passthrough for non-dict sections
+        if not isinstance(section_cfg, dict):
+            resolved[section_name] = section_cfg
             continue
 
-        resolved[section_name] = resolve_section(cfg, section_name, defaults)
+        resolved[section_name] = resolve_section(
+            section_name=section_name,
+            section_cfg=section_cfg,
+            defaults=defaults,
+        )
 
-    # FIX: expose true defaults so modules can use them
     resolved["_defaults"] = defaults
-
     return resolved
 
 
-def resolve_section(cfg, section_name, defaults):
+# ============================================================
+# Section resolution
+# ============================================================
+
+def resolve_section(
+    *,
+    section_name: str,
+    section_cfg: Dict[str, Any],
+    defaults: Dict[str, Any],
+) -> Dict[str, Any]:
     """
-    Merge: defaults → section → override
-    Special behavior for promotions.
-    For exchange_rates, skip override dates if use_global_dates = true.
+    Resolve a single config section using strict, predictable rules.
     """
-    section = copy.deepcopy(cfg.get(section_name, {}))
+    section = copy.deepcopy(section_cfg)
     override = section.pop("override", {})
 
-    # ------------------------------------------------------------------
-    # Base structure
-    # ------------------------------------------------------------------
-    out = {
+    out = _base_from_defaults(defaults)
+
+    # --------------------------------------------------------
+    # Merge section-level values (except reserved keys)
+    # --------------------------------------------------------
+    for key, value in section.items():
+        if key not in _RESERVED_KEYS:
+            out[key] = value
+
+    # --------------------------------------------------------
+    # Section-specific logic
+    # --------------------------------------------------------
+    if section_name == "promotions":
+        _apply_promotions_dates(out, section)
+
+    # --------------------------------------------------------
+    # Apply overrides
+    # --------------------------------------------------------
+    _apply_overrides(
+        out=out,
+        override=override,
+        section_name=section_name,
+    )
+
+    return out
+
+
+# ============================================================
+# Helpers
+# ============================================================
+
+def _base_from_defaults(defaults: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Create the base structure every module inherits.
+    """
+    return {
         "seed": defaults.get("seed"),
         "dates": copy.deepcopy(defaults.get("dates", {})),
-        "paths": copy.deepcopy(defaults.get("paths", {}))
+        "paths": copy.deepcopy(defaults.get("paths", {})),
     }
 
-    # ------------------------------------------------------------------
-    # Merge module-level fields (except reserved keys)
-    # ------------------------------------------------------------------
-    for key, val in section.items():
-        if key not in ("dates", "paths"):  # reserved
-            out[key] = val
 
-    # ------------------------------------------------------------------
-    # Promotions date_ranges special case
-    # ------------------------------------------------------------------
-    if section_name == "promotions":
-        date_ranges = section.get("date_ranges", [])
-        if date_ranges:
-            out["date_ranges"] = date_ranges
-        else:
-            out["date_ranges"] = [{
-                "start": out["dates"]["start"],
-                "end": out["dates"]["end"]
-            }]
+def _apply_promotions_dates(out: Dict[str, Any], section: Dict[str, Any]) -> None:
+    """
+    Promotions-specific handling for date_ranges.
+    """
+    date_ranges = section.get("date_ranges")
+    if date_ranges:
+        out["date_ranges"] = date_ranges
+    else:
+        out["date_ranges"] = [{
+            "start": out["dates"]["start"],
+            "end": out["dates"]["end"],
+        }]
 
-    # ------------------------------------------------------------------
-    # Apply override: DATES
-    # ------------------------------------------------------------------
-    use_global = out.get("use_global_dates", False) if section_name == "exchange_rates" else False
 
-    if "dates" in override and isinstance(override["dates"], dict):
-        if section_name == "exchange_rates" and use_global:
-            # FIX: ignore override dates entirely
-            pass
+def _apply_overrides(
+    *,
+    out: Dict[str, Any],
+    override: Dict[str, Any],
+    section_name: str,
+) -> None:
+    """
+    Apply override rules in a controlled, explicit way.
+    """
+    # Dates override
+    if isinstance(override.get("dates"), dict):
+        if section_name == "exchange_rates" and out.get("use_global_dates"):
+            pass  # explicitly ignored
         else:
             out["dates"] = {**out["dates"], **override["dates"]}
 
-    # ------------------------------------------------------------------
-    # Apply override: SEED
-    # ------------------------------------------------------------------
+    # Seed override
     if override.get("seed") is not None:
         out["seed"] = override["seed"]
 
-    # ------------------------------------------------------------------
-    # Apply override: PATHS
-    # ------------------------------------------------------------------
-    if "paths" in override and isinstance(override["paths"], dict):
+    # Paths override
+    if isinstance(override.get("paths"), dict):
         out["paths"] = {**out["paths"], **override["paths"]}
 
-    return out
+
+# ============================================================
+# Constants
+# ============================================================
+
+_RESERVED_KEYS = {"dates", "paths", "override"}

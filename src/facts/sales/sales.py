@@ -257,28 +257,28 @@ def generate_sales_fact(
     # ------------------------------------------------------------
     # Worker init args
     # ------------------------------------------------------------
-    initargs = (
-        product_np,
-        store_keys,
-        promo_keys_all,
-        promo_pct_all,
-        promo_start_all,
-        promo_end_all,
-        customers,
-        store_to_geo,
-        geo_to_currency,
-        date_pool,
-        date_prob,
-        out_folder,
-        file_format,
-        row_group_size,
-        compression,
-        1,  # no_discount_key
-        delta_output_folder,
-        file_format == "deltaparquet",
-        skip_order_cols,
-        file_format == "deltaparquet",
-        partition_cols,
+    worker_cfg = dict(
+        product_np=product_np,
+        store_keys=store_keys,
+        promo_keys_all=promo_keys_all,
+        promo_pct_all=promo_pct_all,
+        promo_start_all=promo_start_all,
+        promo_end_all=promo_end_all,
+        customers=customers,
+        store_to_geo=store_to_geo,
+        geo_to_currency=geo_to_currency,
+        date_pool=date_pool,
+        date_prob=date_prob,
+        out_folder=out_folder,
+        file_format=file_format,
+        row_group_size=row_group_size,
+        compression=compression,
+        no_discount_key=1,
+        delta_output_folder=delta_output_folder,
+        write_delta=write_delta,
+        skip_order_cols=skip_order_cols,        # 🔥 cannot be overwritten
+        partition_enabled=partition_enabled,
+        partition_cols=partition_cols,
     )
 
     created_files = []
@@ -296,7 +296,7 @@ def generate_sales_fact(
     with Pool(
         processes=n_workers,
         initializer=init_sales_worker,
-        initargs=initargs
+        initargs=(worker_cfg,),
     ) as pool:
 
         for result in pool.imap_unordered(_worker_task, batched_tasks):
