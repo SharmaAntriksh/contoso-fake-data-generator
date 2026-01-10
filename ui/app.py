@@ -4,6 +4,9 @@ import subprocess
 import tempfile
 import sys
 from pathlib import Path
+import re
+
+ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 
 # --- Streamlit import bootstrap ---
 ROOT = Path(__file__).resolve().parents[1]
@@ -217,7 +220,8 @@ if st.button("▶ Generate Data", type="primary"):
         logs = []
 
         for line in process.stdout:
-            logs.append(line)
+            clean = ANSI_ESCAPE_RE.sub("", line)
+            logs.append(clean)
             log_area.code("".join(logs), language="text")
 
         process.wait()
