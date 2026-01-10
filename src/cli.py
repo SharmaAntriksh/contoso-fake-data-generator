@@ -9,6 +9,7 @@ from src.engine.runners.dimensions_runner import generate_dimensions
 from src.engine.runners.sales_runner import run_sales_pipeline
 from src.utils.logging_utils import info, fail, PIPELINE_START_TIME, fmt_sec
 
+
 def str2bool(v):
     if isinstance(v, bool):
         return v
@@ -38,7 +39,7 @@ def main():
         type=str2bool,
         nargs="?",
         const=True,
-        default=None   # 🔥 IMPORTANT
+        default=None   # None means "do not override"
     )
 
     parser.add_argument(
@@ -88,7 +89,7 @@ def main():
     parser.add_argument(
         "--clean",
         action="store_true",
-        help="Delete output folders before running"
+        help="Delete FINAL output folders before running"
     )
 
     parser.add_argument(
@@ -131,18 +132,25 @@ def main():
 
     args = parser.parse_args()
 
+    # --------------------------------------------------
+    # NORMALIZE FORMAT (delta → deltaparquet)
+    # --------------------------------------------------
+    if args.format == "delta":
+        args.format = "deltaparquet"
+
     try:
-        # ---------------- LOAD CONFIG -----------------
+        # ==================================================
+        # LOAD CONFIG
+        # ==================================================
         raw_cfg = load_config_file(args.config)
         cfg = load_config(raw_cfg)
-
         sales_cfg = cfg["sales"]
 
         # ==================================================
-        # APPLY OVERRIDES (SAFE + EXPLICIT)
+        # APPLY OVERRIDES (EXPLICIT + SAFE)
         # ==================================================
 
-        # ----- SALES overrides -----
+        # ----- Sales overrides -----
         if args.format:
             sales_cfg["file_format"] = args.format.lower()
 
@@ -159,16 +167,17 @@ def main():
             sales_cfg["skip_order_cols"] = args.skip_order_cols
 
         # ----- Row group size (Parquet / Delta only) -----
-        if args.row_group_size:
+        if args.row_group_size is not None:
             fmt = sales_cfg.get("file_format")
-
             if fmt not in ("parquet", "deltaparquet"):
                 fail("--row-group-size is only valid for parquet or deltaparquet output")
 
             sales_cfg.setdefault(fmt, {})
             sales_cfg[fmt]["row_group_size"] = args.row_group_size
 
-        # ----- Global date overrides -----
+        # ----- Global date overrides (hardened) -----
+        cfg.setdefault("_defaults", {}).setdefault("dates", {})
+
         if args.start_date:
             cfg["_defaults"]["dates"]["start"] = args.start_date
 
@@ -180,7 +189,7 @@ def main():
         fx_cfg["use_global_dates"] = True
         fx_cfg.pop("dates", None)
 
-        # ---------------- DIMENSION ROW OVERRIDES -----------------
+        # ---------------- DIMENSION SIZE OVERRIDES -----------------
 
         if args.customers is not None:
             cfg["customers"]["total_customers"] = args.customers
@@ -194,34 +203,52 @@ def main():
         if args.promotions is not None:
             cfg["promotions"]["total_promotions"] = args.promotions
 
-        # ---------------- CLEAN -----------------
-        if args.clean:
-            info("Cleaning output folders before run...")
-
-            if "out_folder" in sales_cfg:
-                shutil.rmtree(sales_cfg["out_folder"], ignore_errors=True)
-
-            gen_root = cfg.get("generated_datasets_root")
-            if gen_root:
-                shutil.rmtree(gen_root, ignore_errors=True)
-
-        # ---------------- DRY RUN -----------------
+        # ==================================================
+        # DRY RUN
+        # ==================================================
         if args.dry_run:
             info("Dry run enabled. Resolved configuration:")
             pprint(cfg)
             return
 
-        # ---------------- RUN PIPELINES -----------------
+        # ==================================================
+        # HARD RESET FACT OUTPUT (ONCE, ALWAYS)
+        # ==================================================
+        fact_out = Path(sales_cfg["out_folder"]).resolve()
+
+        info(f"Resetting fact output folder: {fact_out}")
+        if fact_out.exists():
+            shutil.rmtree(fact_out)
+        fact_out.mkdir(parents=True, exist_ok=True)
+
+        # ==================================================
+        # OPTIONAL CLEAN (FINAL OUTPUTS ONLY)
+        # ==================================================
+        if args.clean:
+            info("Cleaning final output folders before run...")
+
+            gen_root = cfg.get("generated_datasets_root")
+            if gen_root:
+                shutil.rmtree(gen_root, ignore_errors=True)
+
+        # ==================================================
+        # RUN PIPELINES
+        # ==================================================
         info("Starting full Contoso pipeline...")
 
-        parquet_dims = Path(sales_cfg["parquet_folder"])
-        fact_out = Path(sales_cfg["out_folder"])
+        parquet_dims = Path(sales_cfg["parquet_folder"]).resolve()
 
         if args.only != "sales":
             generate_dimensions(cfg, parquet_dims)
 
         if args.only != "dimensions":
             run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg)
+
+        # ==================================================
+        # FINAL CLEANUP: scratch space
+        # ==================================================
+        info(f"Cleaning scratch fact_out folder: {fact_out}")
+        shutil.rmtree(fact_out, ignore_errors=True)
 
         elapsed = time.time() - PIPELINE_START_TIME
         info(f"All pipelines completed in {fmt_sec(elapsed)}.")
