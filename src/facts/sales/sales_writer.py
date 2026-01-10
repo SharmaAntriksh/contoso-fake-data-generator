@@ -138,7 +138,7 @@ def write_delta_partitioned(parts_folder, delta_output_folder, partition_cols):
             "deltalake is required for Delta output"
         ) from e
 
-    info(f"[DELTA] Writing {len(part_files)} parts using Arrow → Delta")
+    info(f"[DELTA] Writing {len(part_files)} parts using Arrow to Delta")
 
     first = True
     for pf in part_files:
