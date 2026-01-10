@@ -2,7 +2,6 @@
 #  DIMENSIONS ORCHESTRATOR (CLEAN + DATE-AWARE)
 # ---------------------------------------------------------
 from pathlib import Path
-import copy
 from typing import Dict, Any
 
 from src.dimensions.geography import run_geography
@@ -12,15 +11,21 @@ from src.dimensions.promotions import run_promotions
 from src.dimensions.dates import run_dates
 from src.dimensions.currency import run_currency
 from src.dimensions.exchange_rates import run_exchange_rates
+from src.dimensions.products.products import (
+    generate_product_dimension as run_products
+)
 
-from src.dimensions.products.products import generate_product_dimension as run_products
+from src.utils.logging_utils import done, skip
 
+
+# =========================================================
+# Helpers
+# =========================================================
 
 def _get_defaults_dates(cfg: Dict[str, Any]):
     """
-    Return the defaults.dates mapping from cfg.
-    Support both 'defaults' and '_defaults' keys (backwards compatibility).
-    If none found, return None.
+    Return defaults.dates from cfg.
+    Supports both 'defaults' and '_defaults' (backward compatibility).
     """
     defaults_section = cfg.get("defaults") or cfg.get("_defaults")
     if not defaults_section:
@@ -28,61 +33,82 @@ def _get_defaults_dates(cfg: Dict[str, Any]):
     return defaults_section.get("dates")
 
 
-def _cfg_with_global_dates(cfg: Dict[str, Any], dim_key: str):
+def _cfg_with_global_dates(
+    cfg: Dict[str, Any],
+    dim_key: str,
+    global_dates,
+):
     """
-    Produce a deep copy of cfg where cfg[dim_key] is augmented with
-    a stable 'global_dates' entry that contains defaults.dates.
+    Produce a lightweight cfg variant where cfg[dim_key] is augmented
+    with a stable 'global_dates' entry.
 
-    This copy is used for version checks inside dimension code so that
-    changes to defaults.dates will be detected for date-dependent dims.
+    IMPORTANT:
+    - Only the dimension section is copied.
+    - The rest of cfg is reused (no deep copy of entire config).
     """
-    cfg_for = copy.deepcopy(cfg)
-    gd = _get_defaults_dates(cfg)
-    if gd is None:
-        # nothing to inject
-        return cfg_for
+    if global_dates is None:
+        return cfg
 
-    # Ensure the dimension section exists
-    dim_section = cfg_for.get(dim_key, {})
-    # Put the global dates under a named key so comparisons are stable
-    dim_section["global_dates"] = gd
+    # Shallow copy of root
+    cfg_for = cfg.copy()
+
+    # Shallow copy of the dimension section
+    dim_section = dict(cfg.get(dim_key, {}))
+    dim_section["global_dates"] = global_dates
+
     cfg_for[dim_key] = dim_section
     return cfg_for
 
+
+# =========================================================
+# Main Orchestrator
+# =========================================================
 
 def generate_dimensions(cfg: dict, parquet_dims_folder: Path):
     """
     Orchestrates dimension generation in correct dependency order.
 
-    This orchestrator ensures that:
-      - dimensions that depend on the global default date window (like
-        dates, exchange_rates, stores, promotions, currency) receive
-        a cfg that includes those defaults under 'global_dates', so
-        version checks will detect changes to defaults.dates.
-      - other dimensions (customers, geography) continue to receive the
-        normal cfg and only regenerate when their own section changes.
+    Guarantees:
+    - Date-dependent dimensions regenerate when defaults.dates change
+    - Non-date-dependent dimensions are isolated from date changes
+    - Dependency order is strictly preserved
     """
+
     parquet_dims_folder = Path(parquet_dims_folder).resolve()
     parquet_dims_folder.mkdir(parents=True, exist_ok=True)
-    
-    # 1 Geography (root) — not date-dependent
+
+    # Resolve global default dates ONCE
+    global_dates = _get_defaults_dates(cfg)
+
+    # -----------------------------------------------------
+    # 1. Geography (root, not date-dependent)
+    # -----------------------------------------------------
     run_geography(cfg, parquet_dims_folder)
 
-    # 2 Customers (depends on geography) — not date-dependent
+    # -----------------------------------------------------
+    # 2. Customers (depends on geography, not date-dependent)
+    # -----------------------------------------------------
     run_customers(cfg, parquet_dims_folder)
 
-    # 3 Stores (depends on geography) — date-dependent: include defaults.dates
-    cfg_for = _cfg_with_global_dates(cfg, "stores")
-    run_stores(cfg_for, parquet_dims_folder)
+    # -----------------------------------------------------
+    # 3. Stores (date-dependent)
+    # -----------------------------------------------------
+    run_stores(
+        _cfg_with_global_dates(cfg, "stores", global_dates),
+        parquet_dims_folder,
+    )
 
-    # 4 Promotions (may be date-sensitive) — include defaults.dates
-    cfg_for = _cfg_with_global_dates(cfg, "promotions")
-    run_promotions(cfg_for, parquet_dims_folder)
+    # -----------------------------------------------------
+    # 4. Promotions (date-dependent)
+    # -----------------------------------------------------
+    run_promotions(
+        _cfg_with_global_dates(cfg, "promotions", global_dates),
+        parquet_dims_folder,
+    )
 
-    # 5 Products (static category/subcategory + generated products)
-    #     Not date-dependent; pricing is scenario-based, not time-based
-    from src.utils.logging_utils import done, skip
-
+    # -----------------------------------------------------
+    # 5. Products (static; scenario-based, not date-based)
+    # -----------------------------------------------------
     products = run_products(cfg, parquet_dims_folder)
 
     if products.get("_regenerated"):
@@ -90,14 +116,26 @@ def generate_dimensions(cfg: dict, parquet_dims_folder: Path):
     else:
         skip("Product Dimension up-to-date; skipping.")
 
-    # 6 Dates (obviously date-dependent) — include defaults.dates
-    cfg_for = _cfg_with_global_dates(cfg, "dates")
-    run_dates(cfg_for, parquet_dims_folder)
+    # -----------------------------------------------------
+    # 6. Dates (date-dependent)
+    # -----------------------------------------------------
+    run_dates(
+        _cfg_with_global_dates(cfg, "dates", global_dates),
+        parquet_dims_folder,
+    )
 
-    # 7 Currency (FX master / slicing may depend on dates) — include defaults.dates
-    cfg_for = _cfg_with_global_dates(cfg, "currency")
-    run_currency(cfg_for, parquet_dims_folder)
+    # -----------------------------------------------------
+    # 7. Currency (date-dependent)
+    # -----------------------------------------------------
+    run_currency(
+        _cfg_with_global_dates(cfg, "currency", global_dates),
+        parquet_dims_folder,
+    )
 
-    # 8 Exchange Rates (date-dependent)
-    cfg_for = _cfg_with_global_dates(cfg, "exchange_rates")
-    run_exchange_rates(cfg_for, parquet_dims_folder)
+    # -----------------------------------------------------
+    # 8. Exchange Rates (date-dependent)
+    # -----------------------------------------------------
+    run_exchange_rates(
+        _cfg_with_global_dates(cfg, "exchange_rates", global_dates),
+        parquet_dims_folder,
+    )
