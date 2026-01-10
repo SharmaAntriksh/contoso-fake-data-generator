@@ -65,9 +65,10 @@ Or run via the web interface
 ```powershell
 .\scripts\run_ui.ps1
 ```
+Generator Web UI
 <img src="docs/assets/web-interface.png" alt="All outputs" width="700" />
 
-
+Pipeline Run Status
 <img src="docs/assets/web-pipeline-run.png" alt="All outputs" width="700" />
 
 <h2>Output Folder</h2>
