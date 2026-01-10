@@ -37,10 +37,10 @@ def load_product_dimension(config, output_folder: Path):
         base_df["VariantIndex"] = 0
 
     if p["use_contoso_products"]:
-        info("📦 USING CONTOSO PRODUCTS (AS-IS)")
+        info("USING CONTOSO PRODUCTS (AS-IS)")
         df = base_df
     else:
-        info("📦 EXPANDING CONTOSO PRODUCTS")
+        info("EXPANDING CONTOSO PRODUCTS")
         df = expand_contoso_products(
             base_products=base_df,
             num_products=int(p["num_products"]),

@@ -82,5 +82,5 @@ WITH (
     with open(output_sql_file, "w", encoding="utf-8") as out:
         out.write("\n\n".join(lines))
 
-    work(f"Wrote BULK INSERT script → {Path(output_sql_file).name}")
+    work(f"Wrote BULK INSERT script: {Path(output_sql_file).name}")
     return output_sql_file

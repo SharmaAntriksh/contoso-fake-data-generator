@@ -38,7 +38,7 @@ def merge_parquet_files(parquet_files, merged_file, delete_after=False):
         return None
 
     parquet_files = sorted(parquet_files)
-    info(f"Merging {len(parquet_files)} chunks → {os.path.basename(merged_file)}")
+    info(f"Merging {len(parquet_files)} chunks: {os.path.basename(merged_file)}")
 
     readers = [(p, pq.ParquetFile(p)) for p in parquet_files]
 
@@ -83,7 +83,7 @@ def merge_parquet_files(parquet_files, merged_file, delete_after=False):
             except Exception:
                 pass
 
-    done(f"Merged chunks → {os.path.basename(merged_file)}")
+    done(f"Merged chunks: {os.path.basename(merged_file)}")
     return merged_file
 
 

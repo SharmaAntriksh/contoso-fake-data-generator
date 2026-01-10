@@ -58,7 +58,7 @@ sales:
 # ---------------------------------------------------------------------
 products:
   use_contoso_products: false
-  num_products: 80210
+  num_products: 8021
   seed: 42
 
   pricing:
@@ -79,7 +79,7 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 223701
+  total_customers: 12237
 
   pct_india: 1
   pct_us: 60

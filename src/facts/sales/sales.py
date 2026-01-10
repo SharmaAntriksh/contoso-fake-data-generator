@@ -336,10 +336,15 @@ def generate_sales_fact(
                     completed_units += 1
                     if isinstance(r, str):
                         created_files.append(r)
+                        # work(
+                        #     f"[{completed_units}/{total_units}] → "
+                        #     f"{os.path.basename(r)}"
+                        # )
                         work(
-                            f"[{completed_units}/{total_units}] → "
+                            f"[{completed_units}/{total_units}] -> "
                             f"{os.path.basename(r)}"
                         )
+
             else:
                 completed_units += 1
                 if isinstance(result, str):
