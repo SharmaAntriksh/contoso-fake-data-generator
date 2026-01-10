@@ -11,15 +11,15 @@ PRESETS = {
     # Demo / quick validation
     # --------------------------------------------------------------
     "Customers 10K | Sales 100K": {
-        "start": date(2023, 1, 1),
-        "end": date(2023, 3, 31),
+        "start": date(2021, 1, 1),
+        "end": date(2025, 12, 31),
         "sales_rows": 100_000,
         "customers": 10_000,
     },
 
     "Customers 20K | Sales 1M": {
-        "start": date(2023, 1, 1),
-        "end": date(2023, 3, 31),
+        "start": date(2021, 1, 1),
+        "end": date(2025, 12, 31),
         "sales_rows": 1_000_000,
         "customers": 20_000,
     },
@@ -28,15 +28,15 @@ PRESETS = {
     # Training / Power BI
     # --------------------------------------------------------------
     "Customers 100K | Sales 2M": {
-        "start": date(2022, 1, 1),
-        "end": date(2023, 12, 31),
+        "start": date(2021, 1, 1),
+        "end": date(2025, 12, 31),
         "sales_rows": 2_000_000,
         "customers": 100_000,
     },
 
     "Customers 100K | Sales 10M": {
-        "start": date(2022, 1, 1),
-        "end": date(2023, 12, 31),
+        "start": date(2021, 1, 1),
+        "end": date(2025, 12, 31),
         "sales_rows": 10_000_000,
         "customers": 100_000,
     },
@@ -45,15 +45,15 @@ PRESETS = {
     # Analytics workloads
     # --------------------------------------------------------------
     "Customers 500K | Sales 10M": {
-        "start": date(2020, 1, 1),
-        "end": date(2024, 12, 31),
+        "start": date(2021, 1, 1),
+        "end": date(2025, 12, 31),
         "sales_rows": 10_000_000,
         "customers": 500_000,
     },
 
     "Customers 500K | Sales 20M": {
-        "start": date(2020, 1, 1),
-        "end": date(2024, 12, 31),
+        "start": date(2021, 1, 1),
+        "end": date(2025, 12, 31),
         "sales_rows": 20_000_000,
         "customers": 500_000,
     },
@@ -62,8 +62,8 @@ PRESETS = {
     # Large / performance testing
     # --------------------------------------------------------------
     "Customers 1M | Sales 20M": {
-        "start": date(2019, 1, 1),
-        "end": date(2024, 12, 31),
+        "start": date(2021, 1, 1),
+        "end": date(2025, 12, 31),
         "sales_rows": 20_000_000,
         "customers": 1_000_000,
     },
@@ -72,31 +72,31 @@ PRESETS = {
     # Extreme / stress testing
     # --------------------------------------------------------------
     "Customers 2M | Sales 50M": {
-        "start": date(2018, 1, 1),
-        "end": date(2024, 12, 31),
+        "start": date(2021, 1, 1),
+        "end": date(2025, 12, 31),
         "sales_rows": 50_000_000,
         "customers": 2_000_000,
     },
 
-    "Customers 10K | Products 500 | Sales 100K": {
-        "start": date(2023, 1, 1),
-        "end": date(2023, 3, 31),
+    "Customers 10K | Products 5K | Sales 100K": {
+        "start": date(2021, 1, 1),
+        "end": date(2025, 12, 31),
         "sales_rows": 100_000,
         "customers": 10_000,
-        "products": 500,
+        "products": 5000,
     },
 
-    "Customers 100K | Products 2.5K | Sales 2M": {
-        "start": date(2022, 1, 1),
-        "end": date(2023, 12, 31),
+    "Customers 100K | Products 3K | Sales 2M": {
+        "start": date(2021, 1, 1),
+        "end": date(2025, 12, 31),
         "sales_rows": 2_000_000,
         "customers": 100_000,
-        "products": 2_500,
+        "products": 3_000,
     },
 
     "Customers 500K | Products 10K | Sales 20M": {
-        "start": date(2020, 1, 1),
-        "end": date(2024, 12, 31),
+        "start": date(2021, 1, 1),
+        "end": date(2025, 12, 31),
         "sales_rows": 20_000_000,
         "customers": 500_000,
         "products": 10_000,
