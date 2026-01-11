@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [v0.2.1] – 2026-01-11
+
+### 🐛 Fixed
+- Added missing `pyodbc` dependency required for SQL Server import tooling
+
+---
+
 ## [v0.2.0] – 2026-01-11
 
 ### ✨ Added
