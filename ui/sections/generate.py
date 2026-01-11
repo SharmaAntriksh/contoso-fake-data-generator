@@ -1,4 +1,5 @@
-# run button + execution
+# ui/sections/generate.py
+
 import streamlit as st
 import yaml
 from pathlib import Path
@@ -9,10 +10,12 @@ import re
 
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 
+# Single source of truth
 DIMENSIONS = [
     "customers",
     "products",
     "stores",
+    "geography",
     "promotions",
     "dates",
     "currency",
@@ -37,6 +40,24 @@ def render_generate(cfg, errors):
 
     sales = cfg["sales"]
 
+    # --------------------------------------------------
+    # Derive regeneration intent (READ-ONLY)
+    # --------------------------------------------------
+    regen_all = st.session_state.get("regen_all_dims", False)
+
+    regen_dims = (
+        set(DIMENSIONS)
+        if regen_all
+        else {
+            d
+            for d in DIMENSIONS
+            if st.session_state.get(f"regen_dim_{d}", False)
+        }
+    )
+
+    # --------------------------------------------------
+    # Summary
+    # --------------------------------------------------
     st.markdown(
         f"""
 **This will generate:**
@@ -47,24 +68,22 @@ def render_generate(cfg, errors):
 """
     )
 
+    if regen_dims:
+        st.markdown(
+            "**Regenerating dimensions:** "
+            + ", ".join(d.replace("_", " ").title() for d in sorted(regen_dims))
+        )
+
+    # --------------------------------------------------
+    # Run button
+    # --------------------------------------------------
     if st.button("▶ Generate Data", type="primary"):
         if errors:
             st.error("Fix validation errors before running.")
             return
 
-        # --------------------------------------------------
-        # Derive regeneration intent (CORRECT)
-        # --------------------------------------------------
-        force_regen = set()
-
-        if st.session_state.get("regen_all_dims", False):
-            force_regen = set(DIMENSIONS)
-        else:
-            for dim in DIMENSIONS:
-                if st.session_state.get(f"regen_dim_{dim}", False):
-                    force_regen.add(dim)
-
         apply_global_dates(cfg)
+
         st.info("Running pipeline...")
         log_area = st.empty()
 
@@ -78,7 +97,7 @@ def render_generate(cfg, errors):
             yaml.safe_dump(cfg, f, sort_keys=False)
 
         # --------------------------------------------------
-        # Resolve main.py robustly
+        # Resolve main.py
         # --------------------------------------------------
         project_root = Path(__file__).resolve().parents[2]
         main_py = project_root / "main.py"
@@ -90,8 +109,8 @@ def render_generate(cfg, errors):
             str(cfg_path),
         ]
 
-        if force_regen:
-            cmd.extend(["--regen-dimensions", *sorted(force_regen)])
+        if regen_dims:
+            cmd.extend(["--regen-dimensions", *sorted(regen_dims)])
 
         # --------------------------------------------------
         # Run pipeline
@@ -103,9 +122,6 @@ def render_generate(cfg, errors):
             text=True,
         )
 
-        # --------------------------------------------------
-        # Stream logs (plain text)
-        # --------------------------------------------------
         logs = []
 
         for line in process.stdout:
@@ -116,11 +132,7 @@ def render_generate(cfg, errors):
         process.wait()
         tmp_dir.cleanup()
 
-        # --------------------------------------------------
-        # Trigger SAFE UI reset (DO NOT touch widget keys)
-        # --------------------------------------------------
         if process.returncode == 0:
             st.success("Data generation completed successfully.")
-            st.session_state["_clear_regen_ui"] = True
         else:
             st.error("Generation failed. See logs above.")
