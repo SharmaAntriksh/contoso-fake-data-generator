@@ -160,3 +160,9 @@ You can also generate data using the web UI:
 ### Expanded View
 
 <img src="docs/assets/data-model-expanded.png" alt="Power BI model expanded" width="600" />
+
+---
+
+## Releases
+
+See [CHANGELOG.md](CHANGELOG.md) for details on each release.
