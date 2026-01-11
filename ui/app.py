@@ -19,6 +19,7 @@ from ui.sections import (
     render_pricing,
     render_validation,
     render_generate,
+    render_regeneration
 )
 
 
@@ -43,6 +44,20 @@ def require_key(cfg, path):
 # ------------------------------------------------------------------
 # Page setup
 # ------------------------------------------------------------------
+
+st.markdown(
+    """
+    <style>
+    .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 1.5rem;
+        padding-left: 2rem;
+        padding-right: 2rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 st.set_page_config(
     page_title="Synthetic Retail Data Generator",
@@ -100,6 +115,7 @@ st.write("")
 
 render_dimensions(cfg)
 render_pricing(cfg)
+render_regeneration()
 st.write("")
 
 errors, warnings = render_validation(cfg)

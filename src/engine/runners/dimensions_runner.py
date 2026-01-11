@@ -2,7 +2,7 @@
 #  DIMENSIONS ORCHESTRATOR (CLEAN + DATE-AWARE)
 # ---------------------------------------------------------
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Set, Optional
 
 from src.dimensions.geography import run_geography
 from src.dimensions.customers import run_customers
@@ -37,34 +37,55 @@ def _cfg_with_global_dates(
     cfg: Dict[str, Any],
     dim_key: str,
     global_dates,
-):
+) -> Dict[str, Any]:
     """
     Produce a lightweight cfg variant where cfg[dim_key] is augmented
     with a stable 'global_dates' entry.
 
     IMPORTANT:
-    - Only the dimension section is copied.
-    - The rest of cfg is reused (no deep copy of entire config).
+    - Root cfg is shallow-copied
+    - Only the dimension section is copied
+    - Original cfg is never mutated
     """
     if global_dates is None:
         return cfg
 
-    # Shallow copy of root
     cfg_for = cfg.copy()
-
-    # Shallow copy of the dimension section
     dim_section = dict(cfg.get(dim_key, {}))
     dim_section["global_dates"] = global_dates
-
     cfg_for[dim_key] = dim_section
     return cfg_for
+
+
+def _cfg_with_force_flag(
+    cfg: Dict[str, Any],
+    force: bool,
+) -> Dict[str, Any]:
+    """
+    Return cfg with _force_regenerate flag applied if requested.
+    Does not mutate input cfg.
+    """
+    if not force:
+        return cfg
+
+    cfg_for = cfg.copy()
+    cfg_for["_force_regenerate"] = True
+    return cfg_for
+
+
+def _should_force(dim: str, force_regenerate: Set[str]) -> bool:
+    return dim in force_regenerate or "all" in force_regenerate
 
 
 # =========================================================
 # Main Orchestrator
 # =========================================================
 
-def generate_dimensions(cfg: dict, parquet_dims_folder: Path):
+def generate_dimensions(
+    cfg: Dict[str, Any],
+    parquet_dims_folder: Path,
+    force_regenerate: Optional[Set[str]] = None,
+):
     """
     Orchestrates dimension generation in correct dependency order.
 
@@ -72,7 +93,9 @@ def generate_dimensions(cfg: dict, parquet_dims_folder: Path):
     - Date-dependent dimensions regenerate when defaults.dates change
     - Non-date-dependent dimensions are isolated from date changes
     - Dependency order is strictly preserved
+    - Forced regeneration is runtime-only (no config mutation)
     """
+    force_regenerate = force_regenerate or set()
 
     parquet_dims_folder = Path(parquet_dims_folder).resolve()
     parquet_dims_folder.mkdir(parents=True, exist_ok=True)
@@ -83,33 +106,59 @@ def generate_dimensions(cfg: dict, parquet_dims_folder: Path):
     # -----------------------------------------------------
     # 1. Geography (root, not date-dependent)
     # -----------------------------------------------------
-    run_geography(cfg, parquet_dims_folder)
+    run_geography(
+        _cfg_with_force_flag(
+            cfg,
+            _should_force("geography", force_regenerate),
+        ),
+        parquet_dims_folder,
+    )
 
     # -----------------------------------------------------
     # 2. Customers (depends on geography, not date-dependent)
     # -----------------------------------------------------
-    run_customers(cfg, parquet_dims_folder)
+    run_customers(
+        _cfg_with_force_flag(
+            cfg,
+            _should_force("customers", force_regenerate),
+        ),
+        parquet_dims_folder,
+    )
 
     # -----------------------------------------------------
     # 3. Stores (date-dependent)
     # -----------------------------------------------------
+    cfg_stores = _cfg_with_global_dates(cfg, "stores", global_dates)
     run_stores(
-        _cfg_with_global_dates(cfg, "stores", global_dates),
+        _cfg_with_force_flag(
+            cfg_stores,
+            _should_force("stores", force_regenerate),
+        ),
         parquet_dims_folder,
     )
 
     # -----------------------------------------------------
     # 4. Promotions (date-dependent)
     # -----------------------------------------------------
+    cfg_promotions = _cfg_with_global_dates(cfg, "promotions", global_dates)
     run_promotions(
-        _cfg_with_global_dates(cfg, "promotions", global_dates),
+        _cfg_with_force_flag(
+            cfg_promotions,
+            _should_force("promotions", force_regenerate),
+        ),
         parquet_dims_folder,
     )
 
     # -----------------------------------------------------
     # 5. Products (static; scenario-based, not date-based)
     # -----------------------------------------------------
-    products = run_products(cfg, parquet_dims_folder)
+    products = run_products(
+        _cfg_with_force_flag(
+            cfg,
+            _should_force("products", force_regenerate),
+        ),
+        parquet_dims_folder,
+    )
 
     if products.get("_regenerated"):
         done("Generating Product Dimension completed")
@@ -119,23 +168,35 @@ def generate_dimensions(cfg: dict, parquet_dims_folder: Path):
     # -----------------------------------------------------
     # 6. Dates (date-dependent)
     # -----------------------------------------------------
+    cfg_dates = _cfg_with_global_dates(cfg, "dates", global_dates)
     run_dates(
-        _cfg_with_global_dates(cfg, "dates", global_dates),
+        _cfg_with_force_flag(
+            cfg_dates,
+            _should_force("dates", force_regenerate),
+        ),
         parquet_dims_folder,
     )
 
     # -----------------------------------------------------
     # 7. Currency (date-dependent)
     # -----------------------------------------------------
+    cfg_currency = _cfg_with_global_dates(cfg, "currency", global_dates)
     run_currency(
-        _cfg_with_global_dates(cfg, "currency", global_dates),
+        _cfg_with_force_flag(
+            cfg_currency,
+            _should_force("currency", force_regenerate),
+        ),
         parquet_dims_folder,
     )
 
     # -----------------------------------------------------
     # 8. Exchange Rates (date-dependent)
     # -----------------------------------------------------
+    cfg_fx = _cfg_with_global_dates(cfg, "exchange_rates", global_dates)
     run_exchange_rates(
-        _cfg_with_global_dates(cfg, "exchange_rates", global_dates),
+        _cfg_with_force_flag(
+            cfg_fx,
+            _should_force("exchange_rates", force_regenerate),
+        ),
         parquet_dims_folder,
     )

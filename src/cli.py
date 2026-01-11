@@ -39,7 +39,7 @@ def main():
         type=str2bool,
         nargs="?",
         const=True,
-        default=None   # None means "do not override"
+        default=None
     )
 
     parser.add_argument(
@@ -104,6 +104,15 @@ def main():
         help="Path to configuration file"
     )
 
+    parser.add_argument(
+        "--regen-dimensions",
+        nargs="+",
+        help=(
+            "Force regeneration of selected dimensions "
+            "(e.g. customers products stores or 'all')"
+        ),
+    )
+
     # ----------------- DIMENSION SIZE OVERRIDES -----------------
 
     parser.add_argument(
@@ -132,6 +141,13 @@ def main():
 
     args = parser.parse_args()
 
+    # Normalize force regeneration intent
+    force_regenerate = (
+        set(args.regen_dimensions)
+        if args.regen_dimensions
+        else set()
+    )
+
     # --------------------------------------------------
     # NORMALIZE FORMAT (delta → deltaparquet)
     # --------------------------------------------------
@@ -147,10 +163,9 @@ def main():
         sales_cfg = cfg["sales"]
 
         # ==================================================
-        # APPLY OVERRIDES (EXPLICIT + SAFE)
+        # APPLY OVERRIDES
         # ==================================================
 
-        # ----- Sales overrides -----
         if args.format:
             sales_cfg["file_format"] = args.format.lower()
 
@@ -166,7 +181,6 @@ def main():
         if args.skip_order_cols is not None:
             sales_cfg["skip_order_cols"] = args.skip_order_cols
 
-        # ----- Row group size (Parquet / Delta only) -----
         if args.row_group_size is not None:
             fmt = sales_cfg.get("file_format")
             if fmt not in ("parquet", "deltaparquet"):
@@ -175,7 +189,7 @@ def main():
             sales_cfg.setdefault(fmt, {})
             sales_cfg[fmt]["row_group_size"] = args.row_group_size
 
-        # ----- Global date overrides (hardened) -----
+        # ----- Global date overrides -----
         cfg.setdefault("_defaults", {}).setdefault("dates", {})
 
         if args.start_date:
@@ -189,8 +203,7 @@ def main():
         fx_cfg["use_global_dates"] = True
         fx_cfg.pop("dates", None)
 
-        # ---------------- DIMENSION SIZE OVERRIDES -----------------
-
+        # ----- Dimension size overrides -----
         if args.customers is not None:
             cfg["customers"]["total_customers"] = args.customers
 
@@ -212,7 +225,7 @@ def main():
             return
 
         # ==================================================
-        # HARD RESET FACT OUTPUT (ONCE, ALWAYS)
+        # HARD RESET FACT OUTPUT
         # ==================================================
         fact_out = Path(sales_cfg["out_folder"]).resolve()
 
@@ -222,11 +235,10 @@ def main():
         fact_out.mkdir(parents=True, exist_ok=True)
 
         # ==================================================
-        # OPTIONAL CLEAN (FINAL OUTPUTS ONLY)
+        # OPTIONAL CLEAN
         # ==================================================
         if args.clean:
             info("Cleaning final output folders before run...")
-
             gen_root = cfg.get("generated_datasets_root")
             if gen_root:
                 shutil.rmtree(gen_root, ignore_errors=True)
@@ -239,13 +251,17 @@ def main():
         parquet_dims = Path(sales_cfg["parquet_folder"]).resolve()
 
         if args.only != "sales":
-            generate_dimensions(cfg, parquet_dims)
+            generate_dimensions(
+                cfg,
+                parquet_dims,
+                force_regenerate=force_regenerate,
+            )
 
         if args.only != "dimensions":
             run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg)
 
         # ==================================================
-        # FINAL CLEANUP: scratch space
+        # FINAL CLEANUP
         # ==================================================
         info(f"Cleaning scratch fact_out folder: {fact_out}")
         shutil.rmtree(fact_out, ignore_errors=True)

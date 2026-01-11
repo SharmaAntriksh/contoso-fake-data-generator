@@ -5,12 +5,20 @@ def render_dates(cfg, require_key):
     st.subheader("2️⃣ Date range")
 
     defaults_dates = require_key(cfg, ["defaults", "dates"])
-    defaults_dates["start"] = st.date_input(
-        "Start date", value=defaults_dates["start"]
-    )
-    defaults_dates["end"] = st.date_input(
-        "End date", value=defaults_dates["end"]
-    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        defaults_dates["start"] = st.date_input(
+            "Start date",
+            value=defaults_dates["start"],
+        )
+
+    with col2:
+        defaults_dates["end"] = st.date_input(
+            "End date",
+            value=defaults_dates["end"],
+        )
 
     with st.expander("📅 Calendar options"):
         dates_cfg = require_key(cfg, ["dates"])

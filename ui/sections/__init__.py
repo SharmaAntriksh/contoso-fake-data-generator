@@ -7,6 +7,7 @@ from .dimensions import render_dimensions
 from .pricing import render_pricing
 from .validation import render_validation
 from .generate import render_generate
+from .regenerate import render_regeneration
 
 __all__ = [
     "render_output",
@@ -16,4 +17,5 @@ __all__ = [
     "render_pricing",
     "render_validation",
     "render_generate",
+    'render_regeneration'
 ]
